@@ -1,2 +1,6 @@
-# boss-api-proxy
-Proxy server for integrating with the BOSS External API (OAuth and API access)
+## Overview
+This repository provides a proxy server for BOSS External API integration.
+
+## Purpose
+- OAuth authentication handling
+- Secure access to BOSS APIs
