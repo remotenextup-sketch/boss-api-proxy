@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  const { code, state, error } = req.query;
+  const { code, error } = req.query;
 
   if (error) {
     return res.status(400).json({ error });
@@ -8,6 +8,8 @@ export default async function handler(req, res) {
   if (!code) {
     return res.status(400).json({ error: 'no code' });
   }
+
+  const codeParam = Array.isArray(code) ? code[0] : code;
 
   try {
     const tokenRes = await fetch(
@@ -22,23 +24,26 @@ export default async function handler(req, res) {
           client_id: process.env.BOSS_CLIENT_ID,
           client_secret: process.env.BOSS_CLIENT_SECRET,
           redirect_uri: process.env.BOSS_REDIRECT_URI,
-          code,
+          code: codeParam,
         }),
       }
     );
 
-    const token = await tokenRes.json();
+    const text = await tokenRes.text();
+    console.log('token status', tokenRes.status);
+    console.log('token raw', text);
+
+    const token = JSON.parse(text);
 
     if (!token.access_token) {
       return res.status(500).json(token);
     }
 
-    // ⚠️ 本番では絶対ログ出ししない
     console.log('BOSS token acquired');
 
-    // TODO: refresh_token を安全に保存
     res.status(200).json({ success: true });
   } catch (e) {
+    console.error(e);
     res.status(500).json({ error: 'token fetch failed' });
   }
 }
