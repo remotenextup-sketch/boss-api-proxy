@@ -1,4 +1,3 @@
-// api/boss/oauth/callback.js
 export default function handler(req, res) {
-  res.status(200).send('OAuth Callback Endpoint (Ready)');
+  res.status(200).json({ message: 'callback alive' });
 }
