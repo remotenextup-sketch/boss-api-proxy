@@ -4,7 +4,6 @@ import { getAccessToken } from '../token';
 
 export default async function handler(req, res) {
   const { bossOrderId } = req.body;
-
   if (!bossOrderId) {
     return res.status(400).json({ error: 'bossOrderId required' });
   }
@@ -15,8 +14,8 @@ export default async function handler(req, res) {
     `https://api.boss-oms.jp/BOSS-API/v1/orders/${bossOrderId}`,
     {
       headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
+        Authorization: `Bearer ${accessToken}`,
+      },
     }
   );
 
