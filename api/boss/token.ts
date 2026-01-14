@@ -1,8 +1,8 @@
 // api/boss/token.ts
 import fetch from 'node-fetch';
 
-export async function getAccessToken() {
-  const res = await fetch(
+export default async function handler(req, res) {
+  const tokenRes = await fetch(
     'https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token',
     {
       method: 'POST',
@@ -18,18 +18,20 @@ export async function getAccessToken() {
     }
   );
 
-  const json = await res.json();
+  const json = await tokenRes.json();
 
   if (!json.access_token) {
-    console.error(json);
-    throw new Error('Failed to refresh access token');
+    return res.status(401).json(json);
   }
 
-  // 🔁 refresh_token ローテーションが来た場合に備える
-  if (json.refresh_token && json.refresh_token !== process.env.BOSS_REFRESH_TOKEN) {
-    console.warn('refresh_token rotated. Update ENV manually.');
-    // ※ 本番では KV / DB に保存
+  // refresh_token が更新された場合
+  if (json.refresh_token) {
+    // 本来はDBに保存
+    console.warn('New refresh_token issued');
   }
 
-  return json.access_token;
+  return res.status(200).json({
+    access_token: json.access_token,
+    expires_in: json.expires_in,
+  });
 }
