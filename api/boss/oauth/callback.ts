@@ -28,6 +28,5 @@ export default async function handler(req, res) {
 
   const json = await tokenRes.json();
 
-  // ★ここで refresh_token が取れる
   return res.status(200).json(json);
 }
