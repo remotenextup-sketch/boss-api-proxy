@@ -1,31 +1,26 @@
-// api/boss/orders/search.ts
-import fetch from 'node-fetch';
-import { getAccessToken } from '../token';
+async function getAccessToken() {
+  const r = await fetch(
+    'https://boss-api-proxy.vercel.app/api/boss/token'
+  );
+  const j = await r.json();
+  return j.access_token;
+}
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
+  const token = await getAccessToken();
 
-  const { mallOrderNumber } = req.body;
-  if (!mallOrderNumber) {
-    return res.status(400).json({ error: 'mallOrderNumber required' });
-  }
-
-  const accessToken = await getAccessToken();
-
-  const r = await fetch(
+  const apiRes = await fetch(
     'https://api.boss-oms.jp/BOSS-API/v1/orders/search',
     {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ mallOrderNumber }),
+      body: JSON.stringify(req.body),
     }
   );
 
-  const json = await r.json();
+  const json = await apiRes.json();
   return res.status(200).json(json);
 }
