@@ -3,8 +3,11 @@ import fetch from 'node-fetch';
 import { getAccessToken } from '../token';
 
 export default async function handler(req, res) {
-  const { mallOrderNumber } = req.body;
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
 
+  const { mallOrderNumber } = req.body;
   if (!mallOrderNumber) {
     return res.status(400).json({ error: 'mallOrderNumber required' });
   }
@@ -17,9 +20,9 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ mallOrderNumber })
+      body: JSON.stringify({ mallOrderNumber }),
     }
   );
 
