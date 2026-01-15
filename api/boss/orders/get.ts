@@ -3,7 +3,6 @@ import { getAccessToken } from '../token';
 
 export default async function handler(req, res) {
   try {
-    // 🔴 ここ修正
     const { orderId } = req.body;
 
     if (!orderId) {
@@ -12,31 +11,29 @@ export default async function handler(req, res) {
 
     const accessToken = await getAccessToken();
 
+    if (!accessToken) {
+      return res.status(401).json({ error: 'failed to get access token' });
+    }
+
     const r = await fetch(
       `https://api.boss-oms.jp/BOSS-API/v1/orders/${orderId}`,
       {
-        method: 'GET',
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
         },
       }
     );
 
     const text = await r.text();
+    console.log('order raw response', text);
 
-    // BOSSはたまにJSON以外返すので保険
     try {
-      const json = JSON.parse(text);
-      return res.status(200).json(json);
+      return res.status(200).json(JSON.parse(text));
     } catch {
-      return res.status(500).json({
-        error: 'Invalid JSON from BOSS',
-        raw: text,
-      });
+      return res.status(500).json({ error: 'invalid json', raw: text });
     }
   } catch (e) {
-    console.error('get order error', e);
+    console.error('❌ get order handler error', e);
     return res.status(500).json({ error: 'internal error' });
   }
 }
