@@ -1,59 +1,46 @@
 // api/boss/orders/get.ts
-import fetch from 'node-fetch';
 import { getAccessToken } from '../token';
 
 export default async function handler(req, res) {
   try {
-    console.log('GET ORDER START');
-    console.log('REQ BODY', req.body);
-
     const { orderId } = req.body;
+
     if (!orderId) {
       return res.status(400).json({ error: 'orderId required' });
     }
 
     const accessToken = await getAccessToken();
-    console.log('ACCESS TOKEN HEAD', accessToken?.slice(0, 10));
-
     if (!accessToken) {
-      return res.status(401).json({ error: 'failed to get access token' });
+      return res.status(500).json({ error: 'failed to get access token' });
     }
 
-    const url = `https://api.boss-oms.jp/BOSS-API/v1/orders/${orderId}`;
-    console.log('FETCH URL', url);
+    const apiRes = await fetch(
+      `https://api.boss-oms.jp/BOSS-API/v1/orders/${orderId}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json',
+        },
+      }
+    );
 
-    const r = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-      },
-    });
+    const text = await apiRes.text();
 
-    const text = await r.text();
-    console.log('BOSS STATUS', r.status);
-    console.log('BOSS RAW TEXT', text);
-
-    if (!text) {
-      return res.status(r.status).json({ error: 'empty response from boss' });
-    }
-
-    let json;
+    // JSONじゃないレスポンス対策
     try {
-      json = JSON.parse(text);
-    } catch (e) {
-      return res.status(500).json({
-        error: 'boss response is not json',
+      const json = JSON.parse(text);
+      return res.status(apiRes.status).json(json);
+    } catch {
+      return res.status(apiRes.status).json({
+        error: 'non-json response from BOSS',
         raw: text,
       });
     }
-
-    return res.status(200).json(json);
-
-  } catch (e: any) {
-    console.error('HANDLER ERROR', e);
+  } catch (e) {
+    console.error('orders/get error', e);
     return res.status(500).json({
-      error: 'handler exception',
+      error: 'internal error',
       message: e?.message,
     });
   }
