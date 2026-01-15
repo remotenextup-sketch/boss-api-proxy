@@ -1,4 +1,5 @@
-import fetch from 'node-fetch';
+// api/boss/orders/get.ts
+
 import { getAccessToken } from '../token';
 
 export default async function handler(req, res) {
@@ -25,15 +26,10 @@ export default async function handler(req, res) {
     );
 
     const text = await r.text();
-    console.log('order raw response', text);
 
-    try {
-      return res.status(200).json(JSON.parse(text));
-    } catch {
-      return res.status(500).json({ error: 'invalid json', raw: text });
-    }
+    return res.status(200).json(JSON.parse(text));
   } catch (e) {
-    console.error('❌ get order handler error', e);
+    console.error('get order error', e);
     return res.status(500).json({ error: 'internal error' });
   }
 }
