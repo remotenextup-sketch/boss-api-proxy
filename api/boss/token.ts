@@ -1,29 +1,29 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
+// /api/boss/token.ts
+import fetch from 'node-fetch';
 
-export const config = {
-  api: {
-    bodyParser: true,
-  },
-};
-
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
+export default async function handler(req, res) {
   try {
-    // GET / POST どちらも許可（内部用）
-    const clientId = process.env.BOSS_CLIENT_ID;
-    const clientSecret = process.env.BOSS_CLIENT_SECRET;
-    const refreshToken = process.env.BOSS_REFRESH_TOKEN;
+    // ★ デバッグログ（超重要）
+    console.log('=== BOSS TOKEN DEBUG ===');
+    console.log({
+      client_id: process.env.BOSS_CLIENT_ID,
+      has_refresh: !!process.env.BOSS_REFRESH_TOKEN,
+      refresh_head: process.env.BOSS_REFRESH_TOKEN?.slice(0, 10),
+      refresh_length: process.env.BOSS_REFRESH_TOKEN?.length,
+    });
 
-    if (!clientId || !clientSecret || !refreshToken) {
+    if (!process.env.BOSS_REFRESH_TOKEN) {
       return res.status(500).json({
-        error: 'env missing',
-        clientId: !!clientId,
-        clientSecret: !!clientSecret,
-        refreshToken: !!refreshToken,
+        error: 'refresh_token not found in env',
       });
     }
+
+    const params = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: process.env.BOSS_CLIENT_ID!,
+      client_secret: process.env.BOSS_CLIENT_SECRET!,
+      refresh_token: process.env.BOSS_REFRESH_TOKEN!,
+    });
 
     const tokenRes = await fetch(
       'https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token',
@@ -32,40 +32,48 @@ export default async function handler(
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          client_id: clientId,
-          client_secret: clientSecret,
-          refresh_token: refreshToken,
-        }),
+        body: params.toString(),
       }
     );
 
     const text = await tokenRes.text();
 
-    if (!tokenRes.ok) {
-      return res.status(tokenRes.status).json({
-        error: 'boss token error',
-        body: text,
+    // ★ レスポンスも全部ログ
+    console.log('=== BOSS TOKEN RESPONSE ===');
+    console.log({
+      status: tokenRes.status,
+      body: text,
+    });
+
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      return res.status(500).json({
+        error: 'invalid json from boss',
+        raw: text,
       });
     }
 
-    const json = JSON.parse(text);
-
-    // refresh_token が返ってきたら更新（任意）
-    if (json.refresh_token) {
-      // ※ 本当は DB or KV に保存するのが理想
-      // 今回は環境変数固定でOK
+    if (!tokenRes.ok) {
+      return res.status(tokenRes.status).json({
+        error: 'boss token error',
+        body: json,
+      });
     }
 
+    // ✅ 正常時
     return res.status(200).json({
       access_token: json.access_token,
       expires_in: json.expires_in,
+      token_type: json.token_type,
     });
-  } catch (e: any) {
+
+  } catch (err: any) {
+    console.error('=== BOSS TOKEN FATAL ERROR ===', err);
     return res.status(500).json({
-      error: 'token internal error',
-      message: e.message,
+      error: 'internal error',
+      message: err?.message,
     });
   }
 }
