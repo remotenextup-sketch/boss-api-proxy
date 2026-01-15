@@ -15,19 +15,22 @@ export default async function handler(req, res) {
     }
 
     const apiRes = await fetch(
-      `https://api.boss-oms.jp/BOSS-API/v1/orders/${orderId}`,
+      'https://api.boss-oms.jp/BOSS-API/v1/orders/get',
       {
-        method: 'GET',
+        method: 'POST',
         headers: {
           Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
           Accept: 'application/json',
         },
+        body: JSON.stringify({
+          orderId: Number(orderId), // ★重要：数値で渡す
+        }),
       }
     );
 
     const text = await apiRes.text();
 
-    // JSONじゃないレスポンス対策
     try {
       const json = JSON.parse(text);
       return res.status(apiRes.status).json(json);
