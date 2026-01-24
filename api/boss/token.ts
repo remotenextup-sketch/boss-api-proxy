@@ -1,4 +1,3 @@
-
 // api/boss/token.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getTokensFromKV, setTokens } from '../../lib/use-token';
@@ -61,3 +60,4 @@ export default async function handler(
     });
   }
 }
+
