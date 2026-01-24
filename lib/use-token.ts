@@ -1,5 +1,8 @@
 // lib/use-token.ts
-import { kv } from '@upstash/kv';
+import { Redis } from '@upstash/redis';
+
+const redis = Redis.fromEnv();
+
 
 export async function setTokens(tokens: { accessToken: string; refreshToken: string }) {
   await kv.set('BOSS_ACCESS_TOKEN', tokens.accessToken);
