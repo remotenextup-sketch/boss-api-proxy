@@ -1,0 +1,10 @@
+import { redisClient } from './redis';
+
+(async () => {
+  await redisClient.set(
+    'refresh_token',
+    'eyJhbGciOiJIUzUxMiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJhNTEwOTY4Yy1hZDUzLTRmYzgtODE2Ny01YTE1MTk1NWQ4ZjMifQ.eyJleHAiOjE3NzA5NjkwNTIsImlhdCI6MTc2ODgwNjcwNCwianRpIjoiNWUzZWQ4OGEtNDA3Ny00NWIzLWE2MTktYzM0ZTc0YmJiM2FhIiwiaXNzIjoiaHR0cHM6Ly9hdXRoLmJvc3Mtb21zLmpwL3JlYWxtcy9ib3NzIiwiYXVkIjoiaHR0cHM6Ly9hdXRoLmJvc3Mtb21zLmpwL3JlYWxtcy9ib3NzIiwic3ViIjoiNDk4NzQ2YjktOGU0ZS00ZmE1LThmNzMtYjY4NDQ4ZmY4MjUxIiwidHlwIjoiUmVmcmVzaCIsImF6cCI6Im5leHQtb25saW5lIiwic2Vzc2lvbl9zdGF0ZSI6ImZjNDMxZGE1LWZiNTctNGVhNy1hNTg4LWRjZWZjMGU1ZmIzYSIsInNjb3BlIjoiaW52ZW50b3J5IG9yZGVyIG1vdy1zaGlwbWVudCBCb3NzQ3VzdG9tZXIiLCJzaWQiOiJmYzQzMWRhNS1mYjU3LTRlYTctYTU4OC1kY2VmYzBlNWZiM2EifQ.hB1ShW1hgtNC1jGKqMfRiGzdE73V7_dnEZf-AmMyEE2M-HDJOUbeYDVQUNA959vr_0dJLvZzInIb_CSGSDRWKw'
+  );
+  console.log('初期 refresh_token を Redis にセットしました');
+  process.exit(0);
+})();
