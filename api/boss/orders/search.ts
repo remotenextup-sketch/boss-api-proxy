@@ -1,33 +1,15 @@
-// api/boss/orders/search.ts
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getAccessToken } from '../token';
 
-async function getAccessToken() {
-  const res = await fetch(
-    `${process.env.NEXT_PUBLIC_BASE_URL}/api/boss/token`
-  );
-
-  if (!res.ok) {
-    throw new Error('token fetch failed');
-  }
-
-  const json = await res.json();
-  return json.accessToken;
-}
-
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
+export default async function handler(req, res) {
   try {
-    const { mallOrderNumber } = req.body;
-
-    if (!mallOrderNumber) {
-      return res.status(400).json({ error: 'mallOrderNumber required' });
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      return res.status(500).json({ error: 'access token not available' });
     }
 
-    const accessToken = await getAccessToken();
+    const { mallOrderNumber } = req.body;
 
-    const response = await fetch(
+    const bossRes = await fetch(
       'https://api.boss-oms.jp/BOSS-API/v1/orders/search',
       {
         method: 'POST',
@@ -39,13 +21,10 @@ export default async function handler(
       }
     );
 
-    const json = await response.json();
-    return res.status(200).json(json);
+    const data = await bossRes.json();
+    return res.status(200).json(data);
   } catch (e) {
     console.error('search error', e);
-    return res.status(500).json({
-      error: 'search failed',
-      detail: String(e),
-    });
+    return res.status(500).json({ error: 'search failed', detail: String(e) });
   }
 }
