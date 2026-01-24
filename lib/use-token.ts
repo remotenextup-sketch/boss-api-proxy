@@ -6,6 +6,10 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
+// KVのキー名（ここ重要）
+const ACCESS_KEY = 'boss:access_token';
+const REFRESH_KEY = 'boss:refresh_token';
+
 export async function setTokens(params: {
   accessToken: string;
   refreshToken: string;
