@@ -1,37 +1,63 @@
+
 // api/boss/token.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getTokensFromKV, setTokens } from '../../lib/use-token';
 
-export async function getAccessToken() {
-  console.log('ENV CHECK', {
-    hasClientId: !!process.env.BOSS_CLIENT_ID,
-    hasClientSecret: !!process.env.BOSS_CLIENT_SECRET,
-    hasRefreshToken: !!process.env.BOSS_REFRESH_TOKEN,
-    refreshHead: process.env.BOSS_REFRESH_TOKEN?.slice(0, 8),
-  });
+const TOKEN_ENDPOINT =
+  'https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token';
 
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
   try {
-    const res = await fetch(
-      'https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          client_id: process.env.BOSS_CLIENT_ID!,
-          client_secret: process.env.BOSS_CLIENT_SECRET!,
-          refresh_token: process.env.BOSS_REFRESH_TOKEN!,
-        }),
-      }
-    );
+    // ① KV からトークン取得
+    const tokens = await getTokensFromKV();
 
-    const text = await res.text();
-    console.log('TOKEN RAW RESPONSE', text);
+    if (!tokens?.refreshToken) {
+      return res.status(500).json({
+        error: 'refresh token not found in KV',
+      });
+    }
 
-    const json = JSON.parse(text);
-    return json.access_token ?? null;
+    // ② リフレッシュトークンでアクセストークン再取得
+    const response = await fetch(TOKEN_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: process.env.BOSS_CLIENT_ID!,
+        client_secret: process.env.BOSS_CLIENT_SECRET!,
+        refresh_token: tokens.refreshToken,
+      }),
+    });
+
+    const json = await response.json();
+
+    if (!json.access_token) {
+      console.error('TOKEN ERROR RESPONSE', json);
+      return res.status(500).json({
+        error: 'failed to refresh access token',
+        detail: json,
+      });
+    }
+
+    // ③ 新トークンを KV に保存（refresh_token が返ってきた場合のみ更新）
+    await setTokens({
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token ?? tokens.refreshToken,
+    });
+
+    // ④ 呼び出し元用レスポンス
+    return res.status(200).json({
+      accessToken: json.access_token,
+    });
   } catch (e) {
-    console.error('token error', e);
-    return null;
+    console.error('token handler error', e);
+    return res.status(500).json({
+      error: 'token fetch failed',
+    });
   }
 }
