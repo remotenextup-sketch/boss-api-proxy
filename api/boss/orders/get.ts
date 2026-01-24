@@ -1,29 +1,47 @@
-import type { NextApiRequest, NextApiResponse } from 'next';
-import fetch from 'node-fetch';
-import { getTokens } from '../../../lib/use-token';
+// api/boss/orders/get.ts
+import { getAccessToken } from '../token'
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const { orderId } = req.body;
-  const tokens = await getTokens();
-
-  if (!tokens?.accessToken) {
-    return res.status(401).json({ error: 'access token not found in KV' });
-  }
-
+export default async function handler(req, res) {
   try {
-    const response = await fetch(`https://api.boss-oms.jp/BOSS-API/v1/orders/list`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${tokens.accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ orderId })
-    });
+    const { orderId } = req.body
+    if (!orderId) {
+      return res.status(400).json({ error: 'orderId required' })
+    }
 
-    const data = await response.json();
-    res.status(200).json(data);
+    const accessToken = await getAccessToken()
 
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const r = await fetch(
+      'https://api.boss-oms.jp/BOSS-API/v1/orders/list',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({
+          orders: [Number(orderId)]
+        })
+      }
+    )
+
+    const text = await r.text()
+
+    // デバッグ用（超重要）
+    console.log('BOSS RAW RESPONSE:', text)
+
+    try {
+      const json = JSON.parse(text)
+      return res.status(200).json(json)
+    } catch {
+      return res.status(500).json({
+        error: 'non-json response from BOSS',
+        raw: text
+      })
+    }
+
+  } catch (e) {
+    console.error('orders/get error', e)
+    return res.status(500).json({ error: 'internal error', detail: String(e) })
   }
 }
