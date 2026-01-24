@@ -10,7 +10,6 @@ export default async function handler(
   res: VercelResponse
 ) {
   try {
-    // ① KV からトークン取得
     const tokens = await getTokensFromKV();
 
     if (!tokens?.refreshToken) {
@@ -19,7 +18,6 @@ export default async function handler(
       });
     }
 
-    // ② リフレッシュトークンでアクセストークン再取得
     const response = await fetch(TOKEN_ENDPOINT, {
       method: 'POST',
       headers: {
@@ -36,28 +34,19 @@ export default async function handler(
     const json = await response.json();
 
     if (!json.access_token) {
-      console.error('TOKEN ERROR RESPONSE', json);
-      return res.status(500).json({
-        error: 'failed to refresh access token',
-        detail: json,
-      });
+      return res.status(500).json(json);
     }
 
-    // ③ 新トークンを KV に保存（refresh_token が返ってきた場合のみ更新）
     await setTokens({
       accessToken: json.access_token,
       refreshToken: json.refresh_token ?? tokens.refreshToken,
     });
 
-    // ④ 呼び出し元用レスポンス
     return res.status(200).json({
       accessToken: json.access_token,
     });
   } catch (e) {
-    console.error('token handler error', e);
-    return res.status(500).json({
-      error: 'token fetch failed',
-    });
+    console.error(e);
+    return res.status(500).json({ error: 'token fetch failed' });
   }
 }
-
