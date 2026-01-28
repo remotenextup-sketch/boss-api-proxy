@@ -1,143 +1,88 @@
-import { kv } from "@vercel/kv";
+import type { NextApiRequest, NextApiResponse } from "next";
 
-export const config = { runtime: "edge" };
-
-// ===== ステータスマッピング =====
-const ORDER_STATUS_MAP: Record<number, string> = {
-  100: "新規",
-  200: "承認待ち",
-  300: "承認済み",
-  400: "出荷待ち",
-  500: "配送中",
-  600: "発送済み",
-  800: "完了",
-  850: "交換中",
-  900: "キャンセル",
-  950: "返金済み",
-};
-
-const SHIPMENT_STATUS_MAP: Record<number, string> = {
-  0: "未割当",
-  1: "割当済み",
-  2: "配送中",
-  3: "発送済み",
-  4: "配送失敗",
-  5: "キャンセル",
-};
-
-// ===== 正規化 =====
-function normalizeBossOrder(order: any) {
-  const shipment = order.shipments?.[0];
-
-  const shippingStatus =
-    shipment?.shipmentStatus !== undefined
-      ? SHIPMENT_STATUS_MAP[shipment.shipmentStatus] ?? "不明"
-      : "未出荷";
-
-  return {
-    order_id: order.orderID,
-    mall_order_number: order.mallOrderNumber,
-    order_status: ORDER_STATUS_MAP[order.orderStatus] ?? "不明",
-    shipping_status: shippingStatus,
-    carrier: shipment?.resultDeliveryCompany ?? null,
-    tracking_number: shipment?.resultDeliveryNumber ?? null,
-    delivery_method: shipment?.resultDeliveryMethod ?? null,
-    estimated_delivery_date: shipment?.resultDeliveryDate ?? null,
-    last_update:
-      shipment?.shippingRequestedDateTime ??
-      order.orderImportDateTime ??
-      null,
-  };
-}
-
-// ===== メインハンドラ =====
-export default async function handler(req: Request) {
+/**
+ * Dify → boss-api-proxy → BOSS API
+ * 注文番号から配送状況を返すエンドポイント
+ */
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
   if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 });
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const body = await req.json();
-  const mallOrderNumber = body?.mallOrderNumber;
+  const { mallOrderNumber } = req.body;
 
   if (!mallOrderNumber) {
-    return new Response(
-      JSON.stringify({ error: "mallOrderNumber required" }),
-      { status: 400 }
+    return res.status(400).json({ error: "mallOrderNumber is required" });
+  }
+
+  try {
+    /**
+     * ① 注文検索
+     */
+    const searchRes = await fetch(
+      `${process.env.NEXT_PUBLIC_BASE_URL}/api/boss/orders/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mallOrderNumber }),
+      }
     );
-  }
 
-  const cacheKey = `order:mall:${mallOrderNumber}`;
-  const cached = await kv.get(cacheKey);
-  if (cached) {
-    return Response.json({ source: "cache", ...cached });
-  }
+    const searchData = await searchRes.json();
 
-  // ===== ① search =====
-  const searchRes = await fetch(
-    `${process.env.BOSS_API_BASE_URL}/v1/orders/search`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.BOSS_API_TOKEN}`,
-      },
-      body: JSON.stringify({ mallOrderNumber }),
+    if (!searchRes.ok || !searchData?.data?.length) {
+      return res.status(200).json({
+        found: false,
+        message: "注文情報が見つかりませんでした",
+      });
     }
-  );
 
-  if (!searchRes.ok) {
-    return new Response(
-      JSON.stringify({ error: "BOSS search failed" }),
-      { status: 502 }
+    const orderId = searchData.data[0].order_id;
+
+    /**
+     * ② 注文詳細取得
+     */
+    const detailRes = await fetch(
+      `${process.env.NEXT_PUBLIC_BASE_URL}/api/boss/orders/get`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId }),
+      }
     );
-  }
 
-  const searchData = await searchRes.json();
-  const orderId = searchData?.orders?.[0];
+    const detailData = await detailRes.json();
 
-  if (!orderId) {
-    return Response.json({ found: false });
-  }
-
-  // ===== ② list（get相当） =====
-  const getRes = await fetch(
-    `${process.env.BOSS_API_BASE_URL}/v1/orders/list`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        const accessToken = await getBossAccessToken();
-
-headers: {
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${accessToken}`,
-},
-      body: JSON.stringify({ orders: [orderId] }),
+    if (!detailRes.ok || !detailData?.data) {
+      throw new Error("注文詳細の取得に失敗しました");
     }
-  );
 
-  if (!getRes.ok) {
-    return new Response(
-      JSON.stringify({ error: "BOSS get failed" }),
-      { status: 502 }
-    );
+    const order = detailData.data;
+
+    /**
+     * ③ Dify向けに整形
+     * ※ BOSSの項目名は環境で微妙に違うので防御的に
+     */
+    const shipping = order.shipping || {};
+    const packages = shipping.packages?.[0] || {};
+
+    return res.status(200).json({
+      found: true,
+      orderId,
+      status: order.order_status_name ?? "不明",
+      shippingStatus: shipping.shipping_status_name ?? "未発送",
+      shippingCompany: packages.delivery_company_name ?? null,
+      trackingNumber: packages.tracking_number ?? null,
+      shippingDate: shipping.shipping_date ?? null,
+    });
+  } catch (error: any) {
+    console.error("order-status error:", error);
+    return res.status(500).json({
+      error: "internal_server_error",
+      message: error.message,
+    });
   }
-
-  const orderData = await getRes.json();
-  const order = Array.isArray(orderData) ? orderData[0] : orderData;
-
-  const normalized = normalizeBossOrder(order);
-
-  // ===== TTL 設定 =====
-  const ttl =
-    normalized.shipping_status === "完了"
-      ? 86400
-      : normalized.shipping_status === "配送中" ||
-        normalized.shipping_status === "発送済み"
-      ? 900
-      : 300;
-
-  await kv.set(cacheKey, normalized, { ex: ttl });
-
-  return Response.json({ source: "live", ...normalized });
 }
