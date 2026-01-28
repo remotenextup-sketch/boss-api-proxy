@@ -1,9 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 
-/**
- * Dify → boss-api-proxy → BOSS API
- * 注文番号から配送状況を返すエンドポイント
- */
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse
@@ -19,69 +15,57 @@ export default async function handler(
   }
 
   try {
-    /**
-     * ① 注文検索
-     */
-    const searchRes = await fetch(
-      `${process.env.NEXT_PUBLIC_BASE_URL}/api/boss/orders/search`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mallOrderNumber }),
-      }
-    );
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+    if (!baseUrl) {
+      throw new Error("NEXT_PUBLIC_BASE_URL is not defined");
+    }
+
+    // ① 注文検索
+    const searchRes = await fetch(`${baseUrl}/api/boss/orders/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mallOrderNumber }),
+    });
 
     const searchData = await searchRes.json();
 
-    if (!searchRes.ok || !searchData?.data?.length) {
-      return res.status(200).json({
-        found: false,
-        message: "注文情報が見つかりませんでした",
-      });
+    // ★ デバッグログ
+    console.log("searchData", JSON.stringify(searchData, null, 2));
+
+    // 想定： { orders: [12345] }
+    const orderId =
+      searchData?.orders && searchData.orders.length > 0
+        ? searchData.orders[0]
+        : null;
+
+    if (!orderId) {
+      return res.status(404).json({ error: "Order not found" });
     }
 
-    const orderId = searchData.data[0].order_id;
-
-    /**
-     * ② 注文詳細取得
-     */
-    const detailRes = await fetch(
-      `${process.env.NEXT_PUBLIC_BASE_URL}/api/boss/orders/get`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId }),
-      }
-    );
+    // ② 注文詳細取得
+    const detailRes = await fetch(`${baseUrl}/api/boss/orders/get`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ orderId }),
+    });
 
     const detailData = await detailRes.json();
 
-    if (!detailRes.ok || !detailData?.data) {
-      throw new Error("注文詳細の取得に失敗しました");
-    }
-
-    const order = detailData.data;
-
-    /**
-     * ③ Dify向けに整形
-     * ※ BOSSの項目名は環境で微妙に違うので防御的に
-     */
-    const shipping = order.shipping || {};
-    const packages = shipping.packages?.[0] || {};
+    // ★ デバッグログ
+    console.log("detailData", JSON.stringify(detailData, null, 2));
 
     return res.status(200).json({
-      found: true,
       orderId,
-      status: order.order_status_name ?? "不明",
-      shippingStatus: shipping.shipping_status_name ?? "未発送",
-      shippingCompany: packages.delivery_company_name ?? null,
-      trackingNumber: packages.tracking_number ?? null,
-      shippingDate: shipping.shipping_date ?? null,
+      order: detailData,
     });
   } catch (error: any) {
-    console.error("order-status error:", error);
+    console.error("order-status error", error);
     return res.status(500).json({
-      error: "internal_server_error",
+      error: "Internal Server Error",
       message: error.message,
     });
   }
