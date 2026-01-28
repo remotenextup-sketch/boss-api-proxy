@@ -20,7 +20,6 @@ export default async function handler(
       throw new Error("NEXT_PUBLIC_BASE_URL is not defined");
     }
 
-    // ① 注文検索
     const searchRes = await fetch(`${baseUrl}/api/boss/orders/search`, {
       method: "POST",
       headers: {
@@ -30,11 +29,8 @@ export default async function handler(
     });
 
     const searchData = await searchRes.json();
-
-    // ★ デバッグログ
     console.log("searchData", JSON.stringify(searchData, null, 2));
 
-    // 想定： { orders: [12345] }
     const orderId =
       searchData?.orders && searchData.orders.length > 0
         ? searchData.orders[0]
@@ -44,7 +40,6 @@ export default async function handler(
       return res.status(404).json({ error: "Order not found" });
     }
 
-    // ② 注文詳細取得
     const detailRes = await fetch(`${baseUrl}/api/boss/orders/get`, {
       method: "POST",
       headers: {
@@ -54,8 +49,6 @@ export default async function handler(
     });
 
     const detailData = await detailRes.json();
-
-    // ★ デバッグログ
     console.log("detailData", JSON.stringify(detailData, null, 2));
 
     return res.status(200).json({
@@ -70,3 +63,4 @@ export default async function handler(
     });
   }
 }
+
