@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "main": "api/boss-integration.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
   "dependencies": {
     "@upstash/redis": "^1.36.1",
     "axios": "^1.6.0",
@@ -17,10 +22,5 @@
     "@vercel/node": "^5.5.27",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
-  },
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
   }
 }
