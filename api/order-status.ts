@@ -106,8 +106,12 @@ export default async function handler(req: Request) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.BOSS_API_TOKEN}`,
-      },
+        const accessToken = await getBossAccessToken();
+
+headers: {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${accessToken}`,
+},
       body: JSON.stringify({ orders: [orderId] }),
     }
   );
