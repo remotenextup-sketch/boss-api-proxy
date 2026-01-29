@@ -1,13 +1,12 @@
 // api/boss/token.ts
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { NextRequest, NextResponse } from 'next/server';
 import { getTokensFromKV, setTokens } from '../../lib/use-token';
 
 const TOKEN_ENDPOINT =
   'https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token';
 
 /**
- * 内部利用用：アクセストークン取得関数
- * 他のAPIから import して使う
+ * 内部利用用（他APIから呼ぶ）
  */
 export async function getAccessToken(): Promise<string> {
   const tokens = await getTokensFromKV();
@@ -18,9 +17,7 @@ export async function getAccessToken(): Promise<string> {
 
   const response = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
       client_id: process.env.BOSS_CLIENT_ID!,
@@ -45,20 +42,18 @@ export async function getAccessToken(): Promise<string> {
 }
 
 /**
- * API Route 用：/api/boss/token
+ * Route Handler（Next13方式）
  */
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
+export async function GET(_req: NextRequest) {
   try {
     const accessToken = await getAccessToken();
-    return res.status(200).json({ accessToken });
+    return NextResponse.json({ accessToken });
   } catch (e) {
-    console.error('token handler error', e);
-    return res.status(500).json({
-      error: 'token fetch failed',
-    });
+    console.error(e);
+    return NextResponse.json(
+      { error: 'token fetch failed' },
+      { status: 500 }
+    );
   }
 }
 

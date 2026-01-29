@@ -1,6 +1,6 @@
 // api/boss/orders/debug.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAccessToken } from '../../../lib/get-access-token';
+import { getAccessToken } from '../token';
 
 export default async function handler(
   req: VercelRequest,
