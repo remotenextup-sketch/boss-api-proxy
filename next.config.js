@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "standalone",
+  // export / static は絶対に使わない
 };
 
 module.exports = nextConfig;
