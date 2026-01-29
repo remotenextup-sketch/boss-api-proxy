@@ -1,4 +1,4 @@
-export default function Home() {
-  return <div>OK</div>;
+export default function Page() {
+  return <div>boss-api-proxy running</div>;
 }
 
