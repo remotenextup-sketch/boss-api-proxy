@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import fetch from 'node-fetch';
 
-const BOSS_API_URL = 'https://api.example.com/orders'; // 注文詳細APIのベースURL
+const BOSS_API_URL = 'https://api.example.com/orders'; // 注文詳細API
 const BOSS_CLIENT_ID = process.env.BOSS_CLIENT_ID;
 const BOSS_CLIENT_SECRET = process.env.BOSS_CLIENT_SECRET;
 
@@ -28,12 +28,21 @@ async function getAccessToken(refreshToken: string) {
   return data.access_token; // アクセストークン
 }
 
+// GETリクエスト → 生存確認用
+export async function GET() {
+  return NextResponse.json({ ok: true, message: 'Order API is alive' });
+}
+
+// POSTリクエスト → 注文詳細取得用
 export async function POST(req: Request) {
   try {
     const { orderNumber, refreshToken } = await req.json();
 
     if (!orderNumber || !refreshToken) {
-      return NextResponse.json({ ok: false, message: 'orderNumber and refreshToken required' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, message: 'orderNumber and refreshToken are required' },
+        { status: 400 }
+      );
     }
 
     const accessToken = await getAccessToken(refreshToken);
