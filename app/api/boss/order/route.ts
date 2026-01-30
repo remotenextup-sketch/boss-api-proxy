@@ -2,12 +2,12 @@
 import { NextResponse } from 'next/server';
 import fetch from 'node-fetch';
 
-const BOSS_API_URL = 'https://api.example.com/orders'; // 注文詳細APIのベースURL
+const BOSS_API_URL = 'https://api.example.com/orders';
 const BOSS_CLIENT_ID = process.env.BOSS_CLIENT_ID!;
 const BOSS_CLIENT_SECRET = process.env.BOSS_CLIENT_SECRET!;
 
 // リフレッシュトークンからアクセストークンを取得
-async function getAccessToken(refreshToken: string): Promise<string> {
+async function getAccessToken(refreshToken: string) {
   const res = await fetch('https://api.example.com/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -24,8 +24,8 @@ async function getAccessToken(refreshToken: string): Promise<string> {
     throw new Error(`Token fetch failed: ${errText}`);
   }
 
-  const data: { access_token: string } = await res.json();
-  return data.access_token; // 型安全
+  const data = (await res.json()) as { access_token: string }; // 型アサーション
+  return data.access_token;
 }
 
 // POSTリクエスト → 注文取得
@@ -34,7 +34,10 @@ export async function POST(req: Request) {
     const { orderNumber, refreshToken } = await req.json();
 
     if (!orderNumber || !refreshToken) {
-      return NextResponse.json({ ok: false, message: 'orderNumber and refreshToken are required' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, message: 'orderNumber and refreshToken required' },
+        { status: 400 }
+      );
     }
 
     const accessToken = await getAccessToken(refreshToken);
