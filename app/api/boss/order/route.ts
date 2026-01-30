@@ -1,13 +1,24 @@
 // app/api/boss/order/route.ts
 import { NextResponse } from 'next/server';
 import fetch from 'node-fetch';
+import { getTokensFromKV, setTokens } from '../../utils/kv'; // KV操作関数
+import { BOSS_CLIENT_ID, BOSS_CLIENT_SECRET, BOSS_API_URL } from '../../config';
 
-const BOSS_API_URL = 'https://api.example.com/orders';
-const BOSS_CLIENT_ID = process.env.BOSS_CLIENT_ID!;
-const BOSS_CLIENT_SECRET = process.env.BOSS_CLIENT_SECRET!;
+// KV前提でアクセストークンを取得
+async function getValidAccessToken(): Promise<string> {
+  const tokens = await getTokensFromKV();
+  if (!tokens || !tokens.refreshToken) {
+    throw new Error('No refresh token found in KV');
+  }
 
-// リフレッシュトークンからアクセストークンを取得
-async function getAccessToken(refreshToken: string) {
+  const { accessToken, refreshToken, expiresAt } = tokens;
+
+  // 有効期限が残っていればそのまま返す
+  if (accessToken && expiresAt && Date.now() < expiresAt) {
+    return accessToken;
+  }
+
+  // アクセストークンが無効 or 期限切れ → refresh
   const res = await fetch('https://api.example.com/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -21,26 +32,34 @@ async function getAccessToken(refreshToken: string) {
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Token fetch failed: ${errText}`);
+    throw new Error(`Failed to refresh token: ${errText}`);
   }
 
-  const data = (await res.json()) as { access_token: string }; // 型アサーション
-  return data.access_token;
+  const data: { access_token: string; expires_in: number; refresh_token?: string } =
+    await res.json();
+
+  // 新しいトークンを KV に保存（refresh_token が返ってきた場合は上書き）
+  const newAccessToken = data.access_token;
+  const newRefreshToken = data.refresh_token ?? refreshToken;
+  const newExpiresAt = Date.now() + (data.expires_in - 60) * 1000; // 1分前に余裕を持たせる
+
+  await setTokens({
+    accessToken: newAccessToken,
+    refreshToken: newRefreshToken,
+    expiresAt: newExpiresAt,
+  });
+
+  return newAccessToken;
 }
 
-// POSTリクエスト → 注文取得
 export async function POST(req: Request) {
   try {
-    const { orderNumber, refreshToken } = await req.json();
-
-    if (!orderNumber || !refreshToken) {
-      return NextResponse.json(
-        { ok: false, message: 'orderNumber and refreshToken required' },
-        { status: 400 }
-      );
+    const { orderNumber } = await req.json();
+    if (!orderNumber) {
+      return NextResponse.json({ ok: false, message: 'orderNumber is required' });
     }
 
-    const accessToken = await getAccessToken(refreshToken);
+    const accessToken = await getValidAccessToken();
 
     const res = await fetch(`${BOSS_API_URL}/${orderNumber}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
