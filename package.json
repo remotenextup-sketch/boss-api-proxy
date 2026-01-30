@@ -1,21 +1,21 @@
 {
-  "dependencies": {
-    "@upstash/redis": "^1.36.1",
-    "ioredis": "^5.9.2",
-    "next": "13.5.6",
-    "node-fetch": "^3.3.2",
-    "react": "18.2.0",
-    "react-dom": "18.2.0"
-  },
+  "name": "boss-api-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "vercel-build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "vercel-build": "next build"
   },
-  "devDependencies": {
-    "@types/node": "25.1.0",
-    "@types/react": "19.2.10",
-    "typescript": "5.9.3"
+  "dependencies": {
+    "next": "13.5.6",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "node-fetch": "^3.3.2",
+    "@upstash/redis": "^1.33.0",
+    "ioredis": "^5.3.2"
   }
 }
+
