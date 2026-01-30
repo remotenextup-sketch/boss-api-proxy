@@ -2,12 +2,12 @@
 import { NextResponse } from 'next/server';
 import fetch from 'node-fetch';
 
-const BOSS_API_URL = 'https://api.example.com/orders'; // 注文詳細API
-const BOSS_CLIENT_ID = process.env.BOSS_CLIENT_ID;
-const BOSS_CLIENT_SECRET = process.env.BOSS_CLIENT_SECRET;
+const BOSS_API_URL = 'https://api.example.com/orders'; // 注文詳細APIのベースURL
+const BOSS_CLIENT_ID = process.env.BOSS_CLIENT_ID!;
+const BOSS_CLIENT_SECRET = process.env.BOSS_CLIENT_SECRET!;
 
 // リフレッシュトークンからアクセストークンを取得
-async function getAccessToken(refreshToken: string) {
+async function getAccessToken(refreshToken: string): Promise<string> {
   const res = await fetch('https://api.example.com/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -24,25 +24,17 @@ async function getAccessToken(refreshToken: string) {
     throw new Error(`Token fetch failed: ${errText}`);
   }
 
-  const data = await res.json();
-  return data.access_token; // アクセストークン
+  const data: { access_token: string } = await res.json();
+  return data.access_token; // 型安全
 }
 
-// GETリクエスト → 生存確認用
-export async function GET() {
-  return NextResponse.json({ ok: true, message: 'Order API is alive' });
-}
-
-// POSTリクエスト → 注文詳細取得用
+// POSTリクエスト → 注文取得
 export async function POST(req: Request) {
   try {
     const { orderNumber, refreshToken } = await req.json();
 
     if (!orderNumber || !refreshToken) {
-      return NextResponse.json(
-        { ok: false, message: 'orderNumber and refreshToken are required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, message: 'orderNumber and refreshToken are required' }, { status: 400 });
     }
 
     const accessToken = await getAccessToken(refreshToken);
@@ -61,5 +53,10 @@ export async function POST(req: Request) {
   } catch (err: any) {
     return NextResponse.json({ ok: false, message: err.message }, { status: 500 });
   }
+}
+
+// GETリクエスト → 生存確認用
+export async function GET() {
+  return NextResponse.json({ ok: true, message: 'Order API is alive' });
 }
 
