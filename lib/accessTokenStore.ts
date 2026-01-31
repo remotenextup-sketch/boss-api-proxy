@@ -1,4 +1,4 @@
-import { redisClient } from './redis'; // KV 操作用
+import { redisClient } from './redis.ts'; // KV 操作用
 import fetch from 'node-fetch';
 
 const TOKEN_KEY = 'boss_access_token';
