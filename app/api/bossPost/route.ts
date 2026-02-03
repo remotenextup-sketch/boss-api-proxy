@@ -6,7 +6,7 @@ import { getBossAccessToken } from "@/lib/bossToken";
  * BOSS Orders Search API
  * POST https://api.boss-oms.jp/v1/orders/search
  */
-const BOSS_ORDERS_SEARCH_URL = "https://api.boss-oms.jp/v1/orders/search";
+const BOSS_ORDERS_SEARCH_URL = "https://api.boss-oms.jp/api/v1/orders/search";
 
 export async function POST(req: NextRequest) {
   try {
@@ -36,7 +36,6 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json",
-
         // 🔑 BOSS 正式仕様
         "Authorization": `Bearer ${accessToken}`,
         "X-API-KEY": process.env.BOSS_CLIENT_ID!, // client_id
