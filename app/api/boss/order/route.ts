@@ -1,71 +1,85 @@
-// pages/api/order-status.ts
-import type { NextApiRequest, NextApiResponse } from "next";
+// app/api/boss/order/route.ts
+import { NextResponse } from "next/server";
+import { kv } from "@vercel/kv";
 
-// ここにBOSSから取得した固定アクセストークンを入れてください
-const ACCESS_TOKEN = "ここにアクセストークン";
+const BOSS_ORDER_API = "https://api.boss-oms.jp/BOSS-API/order";
+const BOSS_TOKEN_ENDPOINT = process.env.BOSS_TOKEN_ENDPOINT!;
+const CLIENT_ID = process.env.BOSS_CLIENT_ID!;
+const CLIENT_SECRET = process.env.BOSS_CLIENT_SECRET!;
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function refreshAccessToken(refreshToken: string) {
+  const res = await fetch(BOSS_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+    }),
+  });
+
+  const text = await res.text();
+  const data = JSON.parse(text);
+
+  if (!res.ok || !data.access_token) {
+    throw new Error(`Token refresh failed: ${text}`);
+  }
+
+  // KVに更新
+  await kv.set("boss:access_token", data.access_token);
+  await kv.set("boss:refresh_token", data.refresh_token);
+  await kv.set("boss:expires_at", Date.now() + data.expires_in * 1000);
+
+  return data.access_token;
+}
+
+async function getAccessToken(): Promise<string | null> {
+  const token = await kv.get<string>("boss:access_token");
+  const expiresAt = await kv.get<number>("boss:expires_at");
+
+  if (!token || !expiresAt || Date.now() > expiresAt) {
+    // 期限切れなら refresh
+    const refreshToken = await kv.get<string>("boss:refresh_token");
+    if (!refreshToken) return null;
+    return await refreshAccessToken(refreshToken);
+  }
+
+  return token;
+}
+
+export async function POST(req: Request) {
   try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ ok: false, message: "Method Not Allowed" });
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      return NextResponse.json(
+        { ok: false, message: "No valid access token. Please re-authenticate." },
+        { status: 401 }
+      );
     }
 
-    const { mallOrderNumber } = req.body;
+    const body = await req.json();
 
-    if (!mallOrderNumber) {
-      return res.status(400).json({ ok: false, message: "mallOrderNumber is required" });
-    }
-
-    console.log("🟢 fetch前:", mallOrderNumber);
-
-    // 1️⃣ BOSS API 注文検索
-    const searchRes = await fetch("https://api.boss-oms.jp/BOSS-API/SearchOrder", {
+    const res = await fetch(BOSS_ORDER_API, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Accept": "application/json",
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Authorization": `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ mallOrderNumber }),
+      body: JSON.stringify(body),
     });
 
-    const searchData = await searchRes.json();
-    console.log("🟢 searchData:", searchData);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
 
-    if (!searchData.orders?.length) {
-      return res.status(404).json({ ok: false, message: "Order not found" });
+    if (!res.ok) {
+      return NextResponse.json({ ok: false, status: res.status, data }, { status: res.status });
     }
 
-    const orderID = searchData.orders[0];
-
-    // 2️⃣ BOSS API 注文詳細取得
-    const detailRes = await fetch("https://api.boss-oms.jp/BOSS-API/GetOrder", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
-      },
-      body: JSON.stringify({ orderId: orderID }),
-    });
-
-    const detailData = await detailRes.json();
-    console.log("🟢 detailData:", detailData);
-
-    // 3️⃣ Dify用に整形
-    return res.status(200).json({
-      ok: true,
-      order: {
-        orderNumber: detailData.orderNumber,
-        status: detailData.status,
-        deliveryDate: detailData.deliveryDate,
-        items: detailData.items || [],
-        totalAmount: detailData.totalAmount,
-      },
-    });
+    return NextResponse.json({ ok: true, data });
   } catch (err: any) {
-    console.error("❌ error:", err);
-    return res.status(500).json({ ok: false, message: err.message });
+    return NextResponse.json({ ok: false, message: err.message }, { status: 500 });
   }
 }
 

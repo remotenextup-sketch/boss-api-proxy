@@ -1,4 +1,4 @@
-import { redisClient } from './redis.ts';
+import { redisClient } from './redis';
 
 export async function setTokens(tokens: {
   accessToken: string;

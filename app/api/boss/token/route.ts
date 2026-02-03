@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getValidAccessToken } from "@/lib/get-valid-access-token";
+import { getValidAccessToken } from "@/lib/accessTokenStore";
 
 export async function GET() {
   return NextResponse.json({

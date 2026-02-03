@@ -1,0 +1,52 @@
+// 本番環境用 BOSS OAuth コール
+import { NextResponse } from "next/server";
+import { kv } from "@vercel/kv";
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const code = searchParams.get("code");
+
+  if (!code) {
+    return NextResponse.json({ ok: false, message: "no code" }, { status: 400 });
+  }
+
+  try {
+    const res = await fetch(
+      "https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          client_id: process.env.BOSS_CLIENT_ID!,
+          client_secret: process.env.BOSS_CLIENT_SECRET!,
+          redirect_uri: "https://boss-api-proxy.vercel.app/api/boss/oauth/callback",
+        }),
+      }
+    );
+
+    const text = await res.text();
+    console.log("BOSS token raw:", text);
+
+    const data = JSON.parse(text);
+
+    if (!data.access_token) {
+      return NextResponse.json({ ok: false, data }, { status: 500 });
+    }
+
+    await kv.set("boss:access_token", data.access_token);
+    await kv.set("boss:refresh_token", data.refresh_token);
+    await kv.set("boss:expires_at", Date.now() + data.expires_in * 1000);
+
+    return NextResponse.json({ ok: true, data });
+  } catch (err: any) {
+    return NextResponse.json(
+      { ok: false, message: "token exchange failed", detail: err.message },
+      { status: 500 }
+    );
+  }
+}
+

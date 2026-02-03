@@ -1,51 +1,62 @@
 // app/api/boss/orders/search/route.ts
 import { NextResponse } from "next/server";
-import { kv } from "@vercel/kv";
+import { getBossAccessToken } from "@/lib/bossToken";
 
 export const runtime = "nodejs";
 
-const BOSS_ORDERS_SEARCH_URL =
-  "https://api.boss-oms.jp/api/v1/orders/search";
-
 export async function POST(req: Request) {
-  const accessToken = await kv.get<string>("boss:access_token");
+  try {
+    const body = await req.json();
+    const { mallOrderNumber } = body;
 
-  if (!accessToken) {
+    if (!mallOrderNumber || typeof mallOrderNumber !== "string") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "mallOrderNumber is required",
+          received: mallOrderNumber,
+        },
+        { status: 400 }
+      );
+    }
+
+    // 🔑 常に「有効な」アクセストークンを取得
+    const accessToken = await getBossAccessToken();
+
+    const res = await fetch(
+      "https://api.boss-oms.jp/api/v1/orders/search",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          includeDeletedOrders: false,
+          ...body,
+        }),
+      }
+    );
+
+    const text = await res.text();
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = { raw: text };
+    }
+
+    return NextResponse.json({
+      ok: res.ok,
+      status: res.status,
+      data: json,
+    });
+  } catch (e: any) {
+    console.error("orders/search error:", e);
     return NextResponse.json(
-      { ok: false, message: "no access token" },
-      { status: 401 }
+      { ok: false, error: e.message ?? "unknown error" },
+      { status: 500 }
     );
   }
-
-  const body = await req.json();
-
-  const res = await fetch(BOSS_ORDERS_SEARCH_URL, {
-    method: "POST",
-    headers: {
-      // 🔑 必須2点
-      "Authorization": `Bearer ${accessToken}`,
-      "X-API-KEY": process.env.BOSS_CLIENT_ID!, // ★これが抜けてた
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      includeDeletedOrders: false,
-      ...body,
-    }),
-  });
-
-  const text = await res.text();
-
-  let json: any;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    json = { raw: text };
-  }
-
-  return NextResponse.json({
-    ok: res.ok,
-    status: res.status,
-    data: json,
-  });
 }
 
