@@ -4,7 +4,6 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 
-export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {

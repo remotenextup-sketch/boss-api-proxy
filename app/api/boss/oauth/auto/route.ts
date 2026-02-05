@@ -5,7 +5,6 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 
-export const runtime = "nodejs";
 
 /**
  * 使い方
