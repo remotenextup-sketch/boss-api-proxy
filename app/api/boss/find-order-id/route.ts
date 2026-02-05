@@ -1,4 +1,5 @@
 // app/api/boss/find-order-id/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 
@@ -23,17 +24,22 @@ async function getValidBossAccessToken(): Promise<string> {
   const key = "boss:token";
   const token = await kv.get<BossToken>(key);
 
+  // まだ有効な access_token があればそれを使う
   if (token && !isExpired(token.expires_at)) {
     return token.access_token;
   }
 
+  // refresh_token が無い場合は致命的
   if (!token?.refresh_token) {
     throw new Error("refresh_token not found");
   }
 
+  // refresh
   const res = await fetch(process.env.BOSS_AUTH_URL!, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: token.refresh_token,
@@ -42,7 +48,10 @@ async function getValidBossAccessToken(): Promise<string> {
     }),
   });
 
-  if (!res.ok) throw new Error("token refresh failed");
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`token refresh failed: ${t}`);
+  }
 
   const json = await res.json();
 
@@ -53,11 +62,13 @@ async function getValidBossAccessToken(): Promise<string> {
   };
 
   await kv.set(key, newToken);
+
   return newToken.access_token;
 }
 
 export async function GET(req: NextRequest) {
   try {
+    // query param 取得（Dify / curl 用）
     const mallOrderNumber =
       req.nextUrl.searchParams.get("mallOrderNumber");
 
@@ -69,9 +80,10 @@ export async function GET(req: NextRequest) {
     }
 
     const accessToken = await getValidBossAccessToken();
-    const base = process.env.BOSS_API_BASE_URL!;
+    const baseUrl = process.env.BOSS_API_BASE_URL!;
 
-    const res = await fetch(`${base}/v1/orders/search`, {
+    // BOSS 注文検索
+    const res = await fetch(`${baseUrl}/v1/orders/search`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -90,8 +102,11 @@ export async function GET(req: NextRequest) {
 
     const orderIds: number[] = await res.json();
 
-    if (!orderIds?.length) {
-      return NextResponse.json({ ok: false, reason: "not_found" });
+    if (!orderIds || orderIds.length === 0) {
+      return NextResponse.json({
+        ok: false,
+        reason: "not_found",
+      });
     }
 
     if (orderIds.length > 1) {
@@ -108,7 +123,11 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, reason: "internal_error", message: e.message },
+      {
+        ok: false,
+        reason: "internal_error",
+        message: e?.message ?? "unknown_error",
+      },
       { status: 500 }
     );
   }
