@@ -1,3 +1,6 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 // app/api/bossOrderList/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { getValidBossAccessToken } from "@/lib/bossToken";

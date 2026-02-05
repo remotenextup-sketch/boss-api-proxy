@@ -1,3 +1,6 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 // app/api/boss/callback/route.ts
 import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
