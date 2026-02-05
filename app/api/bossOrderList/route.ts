@@ -1,6 +1,6 @@
 // app/api/bossOrderList/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getBossAccessToken } from "@/lib/bossToken";
+import { getValidBossAccessToken } from "@/lib/bossToken";
 
 const BOSS_ORDERS_LIST_URL =
   "https://api.boss-oms.jp/v1/orders/list";
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const accessToken = await getBossAccessToken();
+    const accessToken = await getValidBossAccessToken();
 
     const res = await fetch(BOSS_ORDERS_LIST_URL, {
       method: "POST",

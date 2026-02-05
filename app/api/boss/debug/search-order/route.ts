@@ -1,69 +1,76 @@
 import { NextResponse } from "next/server";
-import { getBossAccessToken } from "@/lib/bossToken";
+import { getValidBossAccessToken } from "@/lib/bossToken";
+
+const endpoint = "https://api.boss-oms.jp/BOSS-API/v1/orders/search";
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const accessToken = await getBossAccessToken();
 
-  const endpoint = "https://api.boss-oms.jp/v1/orders/search";
+  const accessToken = await getValidBossAccessToken();
 
   const candidates = [
     {
-      label: "① status + orderPlacedDateTime",
+      label: "① mallOrderNumber only",
       body: {
-        orderStatuses: [
-          "WaitingShipment",
-          "Shipping",
-          "Shipped",
-          "Completed",
-        ],
-        orderPlacedDateTime: {
-          from: "2026-02-01T00:00:00+09:00",
-          to: "2026-02-05T23:59:59+09:00",
-        },
+        mallOrderNumber: body.mallOrderNumber,
       },
     },
     {
-      label: "② status + mallOrderNumber",
+      label: "② mallOrderNumber + orderPlacedDateTime",
       body: {
-        orderStatuses: [
-          "WaitingShipment",
-          "Shipping",
-          "Shipped",
-          "Completed",
-        ],
         mallOrderNumber: body.mallOrderNumber,
+        orderPlacedDateTime: body.orderPlacedDateTime,
+      },
+    },
+    {
+      label: "③ orderPlacedDateTime only",
+      body: {
+        orderPlacedDateTime: body.orderPlacedDateTime,
       },
     },
   ];
 
-  const results = [];
+  const results: {
+    label: string;
+    requestBody: any;
+    status?: number;
+    response?: any;
+    error?: string;
+  }[] = [];
 
   for (const c of candidates) {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
-      body: JSON.stringify(c.body),
-    });
-
-    const text = await res.text();
-    let json;
     try {
-      json = JSON.parse(text);
-    } catch {
-      json = text;
-    }
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(c.body),
+      });
 
-    results.push({
-      label: c.label,
-      requestBody: c.body,
-      status: res.status,
-      response: json,
-    });
+      const text = await res.text();
+      let json: any;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = text;
+      }
+
+      results.push({
+        label: c.label,
+        requestBody: c.body,
+        status: res.status,
+        response: json,
+      });
+    } catch (e: any) {
+      results.push({
+        label: c.label,
+        requestBody: c.body,
+        error: e.message,
+      });
+    }
   }
 
   return NextResponse.json({

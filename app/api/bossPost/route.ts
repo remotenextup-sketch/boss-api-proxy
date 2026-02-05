@@ -1,6 +1,6 @@
 // app/api/bossPost/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getBossAccessToken } from "@/lib/bossToken";
+import { getValidBossAccessToken } from "@/lib/bossToken";
 
 /**
  * BOSS Orders Search API
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     // ===============================
     // 2. access_token 取得（KV）
     // ===============================
-    const accessToken = await getBossAccessToken();
+    const accessToken = await getValidBossAccessToken();
 
     // ===============================
     // 3. BOSS API 呼び出し

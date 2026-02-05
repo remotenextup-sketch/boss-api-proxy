@@ -1,77 +1,95 @@
-// lib/bossToken.ts
 import { kv } from "@vercel/kv";
 
-const TOKEN_ENDPOINT =
-  "https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token";
-
-const CLIENT_ID = process.env.BOSS_CLIENT_ID!;
-const CLIENT_SECRET = process.env.BOSS_CLIENT_SECRET!;
-
-/**
- * KV keys
- * boss:access_token  string
- * boss:refresh_token string
- * boss:expires_at    number (ms timestamp)
- */
-type TokenResponse = {
+type BossToken = {
   access_token: string;
-  refresh_token?: string;
-  expires_in: number;
+  refresh_token: string;
+  expires_at: number; // epoch seconds
 };
 
-export async function getBossAccessToken(): Promise<string> {
-  const accessToken = await kv.get<string>("boss:access_token");
-  const expiresAt = await kv.get<number>("boss:expires_at");
+const TOKEN_KEY = "boss:token";
+const REFRESH_LOCK_KEY = "boss:token:refreshing";
 
-  // ① access_token がまだ有効ならそのまま返す
-  if (accessToken && expiresAt && Date.now() < expiresAt - 30_000) {
-    // ※ 30秒マージンを取って安全側
-    return accessToken;
+// JWT exp を読む
+function decodeJwtExp(token: string): number {
+  const payload = JSON.parse(
+    Buffer.from(token.split(".")[1], "base64").toString("utf8")
+  );
+  return payload.exp;
+}
+
+// 5分前から失効扱い
+function isExpired(expiresAt: number, marginSec = 300): boolean {
+  return Date.now() / 1000 > expiresAt - marginSec;
+}
+
+async function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function getValidBossAccessToken(): Promise<string> {
+  let token = await kv.get<BossToken>(TOKEN_KEY);
+
+  // ---- 有効なら即返す ----
+  if (token && !isExpired(token.expires_at)) {
+    return token.access_token;
   }
 
-  // ② refresh_token で更新
-  const refreshToken = await kv.get<string>("boss:refresh_token");
-  if (!refreshToken) {
-    throw new Error(
-      "BOSS refresh_token not found. Re-authentication is required."
+  // ---- refresh ロック確認 ----
+  const locked = await kv.get(REFRESH_LOCK_KEY);
+  if (locked) {
+    // 他プロセスがrefresh中 → 待って再取得
+    await sleep(500);
+    token = await kv.get<BossToken>(TOKEN_KEY);
+
+    if (token && !isExpired(token.expires_at)) {
+      return token.access_token;
+    }
+
+    throw new Error("token refresh race failed");
+  }
+
+  // ---- refresh 開始 ----
+  if (!token?.refresh_token) {
+    throw new Error("BOSS refresh_token not found. Re-auth required.");
+  }
+
+  await kv.set(REFRESH_LOCK_KEY, true, { ex: 30 });
+
+  try {
+    const res = await fetch(
+      "https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: token.refresh_token,
+          client_id: process.env.BOSS_CLIENT_ID!,
+          client_secret: process.env.BOSS_CLIENT_SECRET!,
+        }),
+      }
     );
+
+    const raw = await res.text();
+    if (!res.ok) {
+      throw new Error(`refresh failed: ${raw}`);
+    }
+
+    const json = JSON.parse(raw);
+
+    const newToken: BossToken = {
+      access_token: json.access_token,
+      refresh_token: json.refresh_token, // ★必ず更新
+      expires_at: decodeJwtExp(json.access_token),
+    };
+
+    await kv.set(TOKEN_KEY, newToken);
+
+    return newToken.access_token;
+  } finally {
+    await kv.del(REFRESH_LOCK_KEY);
   }
-
-  console.log("🔁 Refreshing BOSS access token");
-
-  const params = new URLSearchParams();
-  params.set("grant_type", "refresh_token");
-  params.set("refresh_token", refreshToken);
-  params.set("client_id", CLIENT_ID);
-  params.set("client_secret", CLIENT_SECRET);
-
-  const res = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params.toString(),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    console.error("❌ BOSS token refresh failed:", text);
-    throw new Error("Failed to refresh BOSS access token");
-  }
-
-  const data = (await res.json()) as TokenResponse;
-
-  const newExpiresAt = Date.now() + data.expires_in * 1000;
-
-  // ③ KV 更新
-  await kv.set("boss:access_token", data.access_token);
-  await kv.set("boss:expires_at", newExpiresAt);
-
-  // refresh_token は返らない場合がある（Keycloak仕様）
-  if (data.refresh_token) {
-    await kv.set("boss:refresh_token", data.refresh_token);
-  }
-
-  return data.access_token;
 }
 

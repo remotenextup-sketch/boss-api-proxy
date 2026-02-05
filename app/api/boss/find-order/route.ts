@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 
+export const runtime = "nodejs";
+
 /* ===============================
    型
 ================================ */
@@ -27,33 +29,35 @@ function isExpired(expiresAt: number, marginSec = 60): boolean {
 /* ===============================
    Token取得（KV + refresh）
 ================================ */
-async function getBossAccessToken(): Promise<string> {
+async function getValidBossAccessToken(): Promise<string> {
   const key = "boss:token";
-  let token = (await kv.get<BossToken>(key)) ?? null;
+  const token = (await kv.get<BossToken>(key)) ?? null;
 
   if (token && !isExpired(token.expires_at)) {
     return token.access_token;
   }
 
-  // refresh
   if (!token?.refresh_token) {
     throw new Error("BOSS refresh_token not found in KV");
   }
 
   console.log("🔁 Refreshing BOSS access token");
 
-  const res = await fetch(process.env.BOSS_AUTH_URL!, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: token.refresh_token,
-      client_id: process.env.BOSS_CLIENT_ID!,
-      client_secret: process.env.BOSS_CLIENT_SECRET!,
-    }),
-  });
+  const res = await fetch(
+    "https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: token.refresh_token,
+        client_id: process.env.BOSS_CLIENT_ID!,
+        client_secret: process.env.BOSS_CLIENT_SECRET!,
+      }),
+    }
+  );
 
   if (!res.ok) {
     const t = await res.text();
@@ -69,7 +73,6 @@ async function getBossAccessToken(): Promise<string> {
   };
 
   await kv.set(key, newToken);
-
   return newToken.access_token;
 }
 
@@ -87,7 +90,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const accessToken = await getBossAccessToken();
+    const accessToken = await getValidBossAccessToken();
     const base = process.env.BOSS_API_BASE_URL!;
 
     /* -------- SearchOrder -------- */
@@ -98,9 +101,7 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({
-        mallOrderNumber,
-      }),
+      body: JSON.stringify({ mallOrderNumber }),
     });
 
     if (!searchRes.ok) {
