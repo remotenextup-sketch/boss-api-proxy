@@ -1,68 +1,51 @@
+// app/api/boss/orders/list/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-
+import { getValidBossAccessToken } from "@/lib/bossToken";
 
 export async function POST(req: Request) {
   try {
-    const accessToken = await kv.get<string>("boss:access_token");
-    const clientId = process.env.BOSS_CLIENT_ID;
-
-    if (!accessToken) {
-      return NextResponse.json(
-        { ok: false, message: "no access token in KV" },
-        { status: 401 }
-      );
-    }
-
-    if (!clientId) {
-      return NextResponse.json(
-        { ok: false, message: "BOSS_CLIENT_ID is not set" },
-        { status: 500 }
-      );
-    }
-
     const body = await req.json();
-    const { orders } = body;
+    const orderId = body.orderId;
 
-    if (!Array.isArray(orders) || orders.length === 0) {
+    if (!orderId) {
       return NextResponse.json(
-        { ok: false, message: "orders (orderId array) is required" },
+        { ok: false, message: "orderId is required" },
         { status: 400 }
       );
     }
 
+    // ★ ここが最重要：key は必ず boss:token
+    const token = await getValidBossAccessToken();
+
     const res = await fetch(
-      "https://api.boss-oms.jp/api/v1/orders/list", // ← ★ここが決定打
+      "https://api.boss-oms.jp/v1/orders/list",
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "X-API-KEY": clientId,
+          "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json",
+          "Accept": "application/json",
         },
-        body: JSON.stringify({ orders }),
+        body: JSON.stringify({
+          orders: [orderId],
+        }),
       }
     );
 
     const text = await res.text();
-    let data: any;
-
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { raw: text };
-    }
 
     if (!res.ok) {
       return NextResponse.json(
         {
           ok: false,
-          stage: "orders.list",
+          reason: "boss_error",
           status: res.status,
-          raw: data,
+          statusText: res.statusText,
+          raw: text,
         },
         { status: res.status }
       );
@@ -70,12 +53,16 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      data,
+      data: JSON.parse(text),
     });
-  } catch (err: any) {
-    console.error("orders/list error:", err);
+
+  } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: err.message ?? "unknown error" },
+      {
+        ok: false,
+        reason: "internal_error",
+        message: e.message,
+      },
       { status: 500 }
     );
   }
