@@ -13,12 +13,16 @@ export async function refreshToken(oldToken: BossToken): Promise<BossToken> {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
+      // ★★★ ここが最重要 ★★★
+      Authorization:
+        "Basic " +
+        Buffer.from(
+          `${process.env.BOSS_CLIENT_ID}:${process.env.BOSS_CLIENT_SECRET}`
+        ).toString("base64"),
     },
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: oldToken.refresh_token,
-      client_id: process.env.BOSS_CLIENT_ID!,
-      client_secret: process.env.BOSS_CLIENT_SECRET!,
     }),
   });
 
