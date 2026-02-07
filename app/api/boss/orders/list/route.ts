@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { kv } from "@vercel/kv";
-import { refreshToken } from "./refreshToken"; // ← パスは配置に合わせて調整
+import { refreshToken } from "./refreshToken";
 
 type BossToken = {
   access_token: string;
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     }
 
     // ------------------------
-    // 3. token refresh if needed
+    // 3. refresh if expired
     // ------------------------
     const now = Math.floor(Date.now() / 1000);
     if (token.expires_at <= now) {
@@ -69,7 +69,7 @@ export async function POST(req: Request) {
     const text = await res.text();
 
     if (!res.ok) {
-      console.error("❌ BOSS error", res.status, text);
+      console.error("❌ BOSS orders/list error", res.status, text);
       return Response.json(
         {
           ok: false,
