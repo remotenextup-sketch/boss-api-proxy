@@ -1,68 +1,67 @@
-// app/api/boss/orders/list/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-import { getValidBossAccessToken } from "@/lib/bossToken";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const orderId = body.orderId;
 
-    if (!orderId) {
+    // Dify からは { "orders": [orderId] } が来る前提にする
+    const orders = body?.orders;
+
+    if (!Array.isArray(orders) || orders.length === 0) {
       return NextResponse.json(
-        { ok: false, message: "orderId is required" },
+        { message: "orders is required and must be array" },
         { status: 400 }
       );
     }
 
-    // ★ ここが最重要：key は必ず boss:token
-    const token = await getValidBossAccessToken();
+    const token = await kv.get<any>("boss:token");
+    if (!token?.access_token) {
+      return NextResponse.json(
+        { message: "no access token in KV" },
+        { status: 401 }
+      );
+    }
 
     const res = await fetch(
-      "https://api.boss-oms.jp/v1/orders/list",
+      "https://api.boss-oms.jp/BOSS-API/v1/orders/list",
       {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${token}`,
+          Authorization: `Bearer ${token.access_token}`,
           "Content-Type": "application/json",
-          "Accept": "application/json",
+          Accept: "application/json",
         },
         body: JSON.stringify({
-          orders: [orderId],
+          orders: orders.map((id: any) => Number(id)), // 念のため数値化
         }),
       }
     );
 
-    const text = await res.text();
+    const raw = await res.text();
 
     if (!res.ok) {
       return NextResponse.json(
         {
-          ok: false,
-          reason: "boss_error",
+          message: "boss_error",
           status: res.status,
           statusText: res.statusText,
-          raw: text,
+          raw,
         },
-        { status: res.status }
+        { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      ok: true,
-      data: JSON.parse(text),
-    });
+    const data = JSON.parse(raw);
 
+    // ★★★ ここが肝：配列をそのまま返す ★★★
+    return NextResponse.json(data);
   } catch (e: any) {
     return NextResponse.json(
-      {
-        ok: false,
-        reason: "internal_error",
-        message: e.message,
-      },
+      { message: "internal_error", detail: e.message },
       { status: 500 }
     );
   }
