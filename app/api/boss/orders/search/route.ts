@@ -1,3 +1,5 @@
+console.log("❌ HIT orders/search");
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

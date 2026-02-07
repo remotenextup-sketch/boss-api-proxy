@@ -1,3 +1,5 @@
+console.log("🔥 HIT orders/list");
+
 // app/api/boss/orders/list/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
