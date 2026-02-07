@@ -2,12 +2,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { kv } from "@vercel/kv";
-import { refreshToken } from "./refreshToken";
 
 type BossToken = {
   access_token: string;
   refresh_token: string;
-  expires_at: number;
+  expires_at: number; // epoch seconds
 };
 
 export async function POST(req: Request) {
@@ -15,41 +14,58 @@ export async function POST(req: Request) {
 
   try {
     // ------------------------
-    // 1. input
+    // 1. リクエストボディ取得
     // ------------------------
     const body = await req.json();
     const orders = body?.orders;
 
     if (!Array.isArray(orders) || orders.length === 0) {
       return Response.json(
-        { ok: false, message: "orders must be array" },
+        {
+          ok: false,
+          reason: "invalid_request",
+          message: "orders must be a non-empty array",
+        },
         { status: 400 }
       );
     }
 
     // ------------------------
-    // 2. token load
+    // 2. KV からトークン取得
     // ------------------------
-    let token = (await kv.get("boss:token")) as BossToken | null;
+    const token = (await kv.get("boss:token")) as BossToken | null;
 
-    if (!token) {
+    if (!token || !token.access_token) {
       return Response.json(
-        { ok: false, message: "no token in KV" },
+        {
+          ok: false,
+          reason: "no_token",
+          message: "BOSS access token not found. Authorization required.",
+        },
         { status: 401 }
       );
     }
 
     // ------------------------
-    // 3. refresh if expired
+    // 3. トークン有効期限チェック
     // ------------------------
     const now = Math.floor(Date.now() / 1000);
+
     if (token.expires_at <= now) {
-      console.log("🔄 token expired, refreshing");
-      token = await refreshToken(token);
+      console.warn("❌ BOSS access token expired");
+
+      return Response.json(
+        {
+          ok: false,
+          reason: "token_expired",
+          message: "BOSS access token expired. Reauthorization required.",
+        },
+        { status: 401 }
+      );
     }
 
     // ------------------------
-    // 4. call BOSS API
+    // 4. BOSS orders/list 呼び出し
     // ------------------------
     const res = await fetch(
       "https://api.boss-oms.jp/BOSS-API/v1/orders/list",
@@ -66,32 +82,38 @@ export async function POST(req: Request) {
       }
     );
 
-    const text = await res.text();
+    const raw = await res.text();
 
     if (!res.ok) {
-      console.error("❌ BOSS orders/list error", res.status, text);
+      console.error("❌ BOSS orders/list error", res.status, raw);
+
       return Response.json(
         {
           ok: false,
-          where: "boss_api",
+          reason: "boss_api_error",
           status: res.status,
-          body: text,
+          body: raw,
         },
         { status: 500 }
       );
     }
 
     // ------------------------
-    // 5. success
+    // 5. 正常レスポンス
     // ------------------------
     return Response.json({
       ok: true,
-      data: JSON.parse(text),
+      data: JSON.parse(raw),
     });
   } catch (e: any) {
     console.error("❌ orders/list fatal", e);
+
     return Response.json(
-      { ok: false, message: e.message },
+      {
+        ok: false,
+        reason: "internal_error",
+        message: e.message,
+      },
       { status: 500 }
     );
   }
