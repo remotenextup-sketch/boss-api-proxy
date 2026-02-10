@@ -1,119 +1,100 @@
+// app/api/boss/orders/list/route.ts
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
+import { refreshToken } from "./refreshToken";
 
 type BossToken = {
   access_token: string;
   refresh_token: string;
-  expires_at: number; // epoch seconds
+  expires_at: number;
 };
 
-export async function POST(req: Request) {
-  console.log("🔥 HIT orders/list");
+function isExpired(token: BossToken): boolean {
+  return token.expires_at <= Math.floor(Date.now() / 1000) + 5;
+}
 
+async function fetchOrders(
+  token: string,
+  orders: number[]
+): Promise<Response> {
+  return fetch("https://api.boss-oms.jp/BOSS-API/v1/orders/list", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ orders }),
+  });
+}
+
+export async function POST(req: Request) {
   try {
-    // ------------------------
-    // 1. リクエストボディ取得
-    // ------------------------
+    console.info("🔥 HIT orders/list");
+
     const body = await req.json();
     const orders = body?.orders;
 
     if (!Array.isArray(orders) || orders.length === 0) {
-      return Response.json(
-        {
-          ok: false,
-          reason: "invalid_request",
-          message: "orders must be a non-empty array",
-        },
+      return NextResponse.json(
+        { ok: false, message: "orders is required and must be array" },
         { status: 400 }
       );
     }
 
-    // ------------------------
-    // 2. KV からトークン取得
-    // ------------------------
-    const token = (await kv.get("boss:token")) as BossToken | null;
+    let token = await kv.get<BossToken>("boss:token");
 
-    if (!token || !token.access_token) {
-      return Response.json(
-        {
-          ok: false,
-          reason: "no_token",
-          message: "BOSS access token not found. Authorization required.",
-        },
+    if (!token?.access_token) {
+      return NextResponse.json(
+        { ok: false, message: "no access token" },
         { status: 401 }
       );
     }
 
-    // ------------------------
-    // 3. トークン有効期限チェック
-    // ------------------------
-    const now = Math.floor(Date.now() / 1000);
-
-    if (token.expires_at <= now) {
-      console.warn("❌ BOSS access token expired");
-
-      return Response.json(
-        {
-          ok: false,
-          reason: "token_expired",
-          message: "BOSS access token expired. Reauthorization required.",
-        },
-        { status: 401 }
-      );
+    // ① 期限切れなら refresh
+    if (isExpired(token)) {
+      console.info("❌ BOSS access token expired");
+      token = await refreshToken();
     }
 
-    // ------------------------
-    // 4. BOSS orders/list 呼び出し
-    // ------------------------
-    const res = await fetch(
-      "https://api.boss-oms.jp/BOSS-API/v1/orders/list",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token.access_token}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          orders: orders.map((id: any) => Number(id)),
-        }),
-      }
-    );
+    // ② BOSS API 実行
+    let res = await fetchOrders(token.access_token, orders);
+
+    // ③ 途中で401なら再 refresh → 再試行（保険）
+    if (res.status === 401) {
+      console.info("⚠️ 401 detected, retry after refresh");
+      token = await refreshToken();
+      res = await fetchOrders(token.access_token, orders);
+    }
 
     const raw = await res.text();
 
     if (!res.ok) {
-      console.error("❌ BOSS orders/list error", res.status, raw);
-
-      return Response.json(
+      return NextResponse.json(
         {
           ok: false,
-          reason: "boss_api_error",
+          reason: "boss_error",
           status: res.status,
-          body: raw,
+          raw,
         },
         { status: 500 }
       );
     }
 
-    // ------------------------
-    // 5. 正常レスポンス
-    // ------------------------
-    return Response.json({
+    const data = JSON.parse(raw);
+
+    return NextResponse.json({
       ok: true,
-      data: JSON.parse(raw),
+      data,
     });
   } catch (e: any) {
     console.error("❌ orders/list fatal", e);
-
-    return Response.json(
-      {
-        ok: false,
-        reason: "internal_error",
-        message: e.message,
-      },
+    return NextResponse.json(
+      { ok: false, reason: "internal_error", message: e.message },
       { status: 500 }
     );
   }
