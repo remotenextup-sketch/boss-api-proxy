@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     const base = process.env.BOSS_API_BASE_URL!;
 
     /* -------- SearchOrder -------- */
-    const searchRes = await fetch(`${base}/v1/orders/search`, {
+    const searchRes = await fetch(`${base}/BOSS-API/v1/orders/search`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     const orderId = orderIds[0];
 
     /* -------- Order Detail -------- */
-    const detailRes = await fetch(`${base}/v1/orders/${orderId}`, {
+    const detailRes = await fetch(`${base}/BOSS-API/v1/orders/${orderId}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/json",
