@@ -56,24 +56,30 @@ export async function POST(req: NextRequest) {
     const orderId = orderIds[0];
 
     /* -------- Order Detail -------- */
-    const detailRes = await fetch(`${base}/BOSS-API/v1/orders/${orderId}`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
-    });
+/* -------- Order Detail -------- */
+const detailUrl = `${base}/BOSS-API/v1/orders/${orderId}`;
+console.log("📦 Detail URL:", detailUrl);
+console.log("📦 Order ID:", orderId);
 
-    if (!detailRes.ok) {
-      const t = await detailRes.text();
-      return NextResponse.json(
-        { ok: false, reason: "detail_failed", raw: t },
-        { status: 502 }
-      );
-    }
+const detailRes = await fetch(detailUrl, {
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/json",
+  },
+});
 
-    const detail = await detailRes.json();
+const detailRaw = await detailRes.text();
+console.log("📦 Detail status:", detailRes.status);
+console.log("📦 Detail raw:", detailRaw);
 
-    /* -------- ★ 本人確認：メールアドレス照合 -------- */
+if (!detailRes.ok) {
+  return NextResponse.json(
+    { ok: false, reason: "detail_failed", status: detailRes.status, raw: detailRaw, url: detailUrl },
+    { status: 502 }
+  );
+}
+
+const detail = JSON.parse(detailRaw);    /* -------- ★ 本人確認：メールアドレス照合 -------- */
     if (email) {
       const inputEmail = email.trim().toLowerCase();
       const orderEmail = (
