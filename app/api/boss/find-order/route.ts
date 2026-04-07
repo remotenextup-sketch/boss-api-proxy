@@ -16,7 +16,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ★ 統一されたトークン取得（ロック付き）
     const accessToken = await getValidBossAccessToken();
     const base = process.env.BOSS_API_BASE_URL!;
 
@@ -55,36 +54,36 @@ export async function POST(req: NextRequest) {
 
     const orderId = orderIds[0];
 
-    /* -------- Order Detail -------- */
-/* -------- Order Detail -------- */
-const detailUrl = `${base}/BOSS-API/v1/orders/${orderId}`;
-console.log("📦 Detail URL:", detailUrl);
-console.log("📦 Order ID:", orderId);
+    /* -------- GetOrder（orders/list経由） -------- */
+    const detailRes = await fetch(`${base}/BOSS-API/v1/orders/list`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ orders: [orderId] }),
+    });
 
-const detailRes = await fetch(detailUrl, {
-  headers: {
-    Authorization: `Bearer ${accessToken}`,
-    Accept: "application/json",
-  },
-});
+    if (!detailRes.ok) {
+      const t = await detailRes.text();
+      return NextResponse.json(
+        { ok: false, reason: "detail_failed", status: detailRes.status, raw: t },
+        { status: 502 }
+      );
+    }
 
-const detailRaw = await detailRes.text();
-console.log("📦 Detail status:", detailRes.status);
-console.log("📦 Detail raw:", detailRaw);
+    const detailData = await detailRes.json();
+    const detail = Array.isArray(detailData) ? detailData[0] : detailData;
 
-if (!detailRes.ok) {
-  return NextResponse.json(
-    { ok: false, reason: "detail_failed", status: detailRes.status, raw: detailRaw, url: detailUrl },
-    { status: 502 }
-  );
-}
+    if (!detail) {
+      return NextResponse.json({ ok: false, reason: "detail_empty" });
+    }
 
-const detail = JSON.parse(detailRaw);    /* -------- ★ 本人確認：メールアドレス照合 -------- */
+    /* -------- ★ 本人確認：メールアドレス照合 -------- */
     if (email) {
       const inputEmail = email.trim().toLowerCase();
-      const orderEmail = (
-        detail.buyerEmail ?? detail.customerEmail ?? ""
-      ).trim().toLowerCase();
+      const orderEmail = (detail.buyer?.email ?? "").trim().toLowerCase();
 
       if (orderEmail && inputEmail !== orderEmail) {
         console.warn(
@@ -98,16 +97,26 @@ const detail = JSON.parse(detailRaw);    /* -------- ★ 本人確認：メー�
       }
     }
 
-    /* -------- Dify向け最小レスポンス -------- */
+    /* -------- Dify向けレスポンス -------- */
+    const shipment = detail.shipments?.[0];
+
     return NextResponse.json({
       ok: true,
       order: {
         orderId,
         mallOrderNumber: detail.mallOrderNumber,
         orderStatus: detail.orderStatus,
-        shipmentStatus: detail.shipmentStatus,
-        carrier: detail.shipments?.[0]?.carrierName ?? null,
-        trackingNumber: detail.shipments?.[0]?.trackingNumber ?? null,
+        shipmentStatus: shipment?.shipmentStatus ?? null,
+        carrier: shipment?.resultDeliveryCompany ?? null,
+        trackingNumber: shipment?.resultDeliveryNumber ?? null,
+        buyerName: detail.buyer?.name ?? null,
+        buyerEmail: detail.buyer?.email ?? null,
+        itemName: shipment?.shipmentItems?.[0]?.itemName ?? null,
+        unitPrice: shipment?.shipmentItems?.[0]?.unitPrice ?? null,
+        quantity: shipment?.shipmentItems?.[0]?.quantity ?? null,
+        resultDeliveryDate: shipment?.resultDeliveryDate ?? null,
+        mallOrderDateTime: detail.mallOrderDateTime ?? null,
+        totalPrice: detail.price?.totalPrice ?? null,
       },
     });
   } catch (e: any) {
