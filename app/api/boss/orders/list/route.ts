@@ -4,18 +4,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { kv } from "@vercel/kv";
-import { refreshToken } from "./refreshToken";
-
-type BossToken = {
-  access_token: string;
-  refresh_token: string;
-  expires_at: number;
-};
-
-function isExpired(token: BossToken): boolean {
-  return token.expires_at <= Math.floor(Date.now() / 1000) + 5;
-}
+import { getValidBossAccessToken } from "@/lib/bossToken";
 
 async function fetchOrders(
   token: string,
@@ -46,51 +35,31 @@ export async function POST(req: Request) {
       );
     }
 
-    let token = await kv.get<BossToken>("boss:token");
+    // ★ 統一されたトークン取得（ロック付き）
+    let accessToken = await getValidBossAccessToken();
 
-    if (!token?.access_token) {
-      return NextResponse.json(
-        { ok: false, message: "no access token" },
-        { status: 401 }
-      );
-    }
+    // BOSS API 実行
+    let res = await fetchOrders(accessToken, orders);
 
-    // ① 期限切れなら refresh
-    if (isExpired(token)) {
-      console.info("❌ BOSS access token expired");
-      token = await refreshToken();
-    }
-
-    // ② BOSS API 実行
-    let res = await fetchOrders(token.access_token, orders);
-
-    // ③ 途中で401なら再 refresh → 再試行（保険）
+    // 401なら再取得 → 再試行（保険）
     if (res.status === 401) {
       console.info("⚠️ 401 detected, retry after refresh");
-      token = await refreshToken();
-      res = await fetchOrders(token.access_token, orders);
+      accessToken = await getValidBossAccessToken();
+      res = await fetchOrders(accessToken, orders);
     }
 
     const raw = await res.text();
 
     if (!res.ok) {
       return NextResponse.json(
-        {
-          ok: false,
-          reason: "boss_error",
-          status: res.status,
-          raw,
-        },
+        { ok: false, reason: "boss_error", status: res.status, raw },
         { status: 500 }
       );
     }
 
     const data = JSON.parse(raw);
 
-    return NextResponse.json({
-      ok: true,
-      data,
-    });
+    return NextResponse.json({ ok: true, data });
   } catch (e: any) {
     console.error("❌ orders/list fatal", e);
     return NextResponse.json(
@@ -99,4 +68,3 @@ export async function POST(req: Request) {
     );
   }
 }
-

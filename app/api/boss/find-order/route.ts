@@ -2,88 +2,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { kv } from "@vercel/kv";
+import { getValidBossAccessToken } from "@/lib/bossToken";
 
-
-/* ===============================
-   型
-================================ */
-type BossToken = {
-  access_token: string;
-  refresh_token: string;
-  expires_at: number; // epoch seconds
-};
-
-/* ===============================
-   util
-================================ */
-function decodeJwtExp(token: string): number {
-  const payload = JSON.parse(
-    Buffer.from(token.split(".")[1], "base64").toString("utf8")
-  );
-  return payload.exp;
-}
-
-function isExpired(expiresAt: number, marginSec = 60): boolean {
-  return Date.now() / 1000 > expiresAt - marginSec;
-}
-
-/* ===============================
-   Token取得（KV + refresh）
-================================ */
-async function getValidBossAccessToken(): Promise<string> {
-  const key = "boss:token";
-  const token = (await kv.get<BossToken>(key)) ?? null;
-
-  if (token && !isExpired(token.expires_at)) {
-    return token.access_token;
-  }
-
-  if (!token?.refresh_token) {
-    throw new Error("BOSS refresh_token not found in KV");
-  }
-
-  console.log("🔁 Refreshing BOSS access token");
-
-  const res = await fetch(
-    "https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: token.refresh_token,
-        client_id: process.env.BOSS_CLIENT_ID!,
-        client_secret: process.env.BOSS_CLIENT_SECRET!,
-      }),
-    }
-  );
-
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Token refresh failed: ${t}`);
-  }
-
-  const json = await res.json();
-
-  const newToken: BossToken = {
-    access_token: json.access_token,
-    refresh_token: json.refresh_token ?? token.refresh_token,
-    expires_at: decodeJwtExp(json.access_token),
-  };
-
-  await kv.set(key, newToken);
-  return newToken.access_token;
-}
-
-/* ===============================
-   API本体
-================================ */
 export async function POST(req: NextRequest) {
   try {
-    const { mallOrderNumber } = await req.json();
+    const body = await req.json();
+    const { mallOrderNumber, email } = body;
 
     if (!mallOrderNumber) {
       return NextResponse.json(
@@ -92,6 +16,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // ★ 統一されたトークン取得（ロック付き）
     const accessToken = await getValidBossAccessToken();
     const base = process.env.BOSS_API_BASE_URL!;
 
@@ -148,6 +73,25 @@ export async function POST(req: NextRequest) {
 
     const detail = await detailRes.json();
 
+    /* -------- ★ 本人確認：メールアドレス照合 -------- */
+    if (email) {
+      const inputEmail = email.trim().toLowerCase();
+      const orderEmail = (
+        detail.buyerEmail ?? detail.customerEmail ?? ""
+      ).trim().toLowerCase();
+
+      if (orderEmail && inputEmail !== orderEmail) {
+        console.warn(
+          `⚠️ Email mismatch: input=${inputEmail}, order=${orderEmail}, orderId=${orderId}`
+        );
+        return NextResponse.json({
+          ok: false,
+          reason: "email_mismatch",
+          message: "注文情報とメールアドレスが一致しません",
+        });
+      }
+    }
+
     /* -------- Dify向け最小レスポンス -------- */
     return NextResponse.json({
       ok: true,
@@ -168,4 +112,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-

@@ -34,28 +34,37 @@ export async function getValidBossAccessToken(): Promise<string> {
     return token.access_token;
   }
 
-  // ---- refresh ロック確認 ----
-  const locked = await kv.get(REFRESH_LOCK_KEY);
-  if (locked) {
-    // 他プロセスがrefresh中 → 待って再取得
-    await sleep(500);
-    token = await kv.get<BossToken>(TOKEN_KEY);
+  // ---- ロック取得を試みる（NX = 存在しない場合のみセット） ----
+  const acquired = await kv.set(REFRESH_LOCK_KEY, "1", { nx: true, ex: 30 });
 
-    if (token && !isExpired(token.expires_at)) {
-      return token.access_token;
+  if (!acquired) {
+    // 他プロセスが更新中 → リトライして待つ（最大5秒）
+    for (let i = 0; i < 10; i++) {
+      await sleep(500);
+      token = await kv.get<BossToken>(TOKEN_KEY);
+      if (token && !isExpired(token.expires_at)) {
+        return token.access_token;
+      }
     }
-
-    throw new Error("token refresh race failed");
+    throw new Error("token refresh race failed after retries");
   }
 
   // ---- refresh 開始 ----
+  // ロック取得後に再度トークン確認（他プロセスが直前に更新した可能性）
+  token = await kv.get<BossToken>(TOKEN_KEY);
+  if (token && !isExpired(token.expires_at)) {
+    await kv.del(REFRESH_LOCK_KEY);
+    return token.access_token;
+  }
+
   if (!token?.refresh_token) {
+    await kv.del(REFRESH_LOCK_KEY);
     throw new Error("BOSS refresh_token not found. Re-auth required.");
   }
 
-  await kv.set(REFRESH_LOCK_KEY, true, { ex: 30 });
-
   try {
+    console.info("🔄 BOSS token refresh start");
+
     const res = await fetch(
       "https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/token",
       {
@@ -74,6 +83,7 @@ export async function getValidBossAccessToken(): Promise<string> {
 
     const raw = await res.text();
     if (!res.ok) {
+      console.error("❌ BOSS token refresh failed:", raw);
       throw new Error(`refresh failed: ${raw}`);
     }
 
@@ -86,10 +96,10 @@ export async function getValidBossAccessToken(): Promise<string> {
     };
 
     await kv.set(TOKEN_KEY, newToken);
+    console.info("✅ BOSS token refreshed");
 
     return newToken.access_token;
   } finally {
     await kv.del(REFRESH_LOCK_KEY);
   }
 }
-
