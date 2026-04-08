@@ -19,7 +19,6 @@ export async function POST(req: NextRequest) {
     const accessToken = await getValidBossAccessToken();
     const base = process.env.BOSS_API_BASE_URL!;
 
-    /* -------- SearchOrder -------- */
     const searchRes = await fetch(`${base}/BOSS-API/v1/orders/search`, {
       method: "POST",
       headers: {
@@ -54,7 +53,6 @@ export async function POST(req: NextRequest) {
 
     const orderId = orderIds[0];
 
-    /* -------- GetOrder（orders/list経由） -------- */
     const detailRes = await fetch(`${base}/BOSS-API/v1/orders/list`, {
       method: "POST",
       headers: {
@@ -80,7 +78,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "detail_empty" });
     }
 
-    /* -------- ★ 本人確認：メールアドレス照合 -------- */
     if (email) {
       const inputEmail = email.trim().toLowerCase();
       const orderEmail = (detail.buyer?.email ?? "").trim().toLowerCase();
@@ -97,7 +94,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    /* -------- Dify向けレスポンス -------- */
     const shipment = detail.shipments?.[0];
 
     return NextResponse.json({
@@ -112,6 +108,7 @@ export async function POST(req: NextRequest) {
         buyerName: detail.buyer?.name ?? null,
         buyerEmail: detail.buyer?.email ?? null,
         itemName: shipment?.shipmentItems?.[0]?.itemName ?? null,
+        skuCode: shipment?.shipmentItems?.[0]?.skuCode ?? null,
         unitPrice: shipment?.shipmentItems?.[0]?.unitPrice ?? null,
         quantity: shipment?.shipmentItems?.[0]?.quantity ?? null,
         resultDeliveryDate: shipment?.resultDeliveryDate ?? null,
