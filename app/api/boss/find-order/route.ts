@@ -95,12 +95,38 @@ export async function POST(req: NextRequest) {
     }
 
     const shipment = detail.shipments?.[0];
-　　const consignee = shipment?.consignee;
-　　const addressParts = [
- 　　 consignee?.prefecture,
- 　　 consignee?.city,
- 　　 consignee?.townAndStreet
-　　].filter(Boolean);
+    const consignee = shipment?.consignee;
+    const addressParts = [
+      consignee?.prefecture,
+      consignee?.city,
+      consignee?.townAndStreet,
+    ].filter(Boolean);
+
+    // ---- ▼ 全商品リストを生成（全shipmentの全itemを収集） ----
+    const allItems: Array<{
+      index: number;
+      itemName: string;
+      skuCode: string;
+      unitPrice: number | null;
+      quantity: number | null;
+    }> = [];
+
+    let idx = 1;
+    for (const s of detail.shipments ?? []) {
+      for (const item of s.shipmentItems ?? []) {
+        allItems.push({
+          index: idx++,
+          itemName: item.itemName ?? "",
+          skuCode: item.skuCode ?? "",
+          unitPrice: item.unitPrice ?? null,
+          quantity: item.quantity ?? null,
+        });
+      }
+    }
+    // ---- ▲ 全商品リスト生成ここまで ▲ ----
+
+    // 代表商品（既存互換）
+    const firstItem = allItems[0] ?? null;
 
     return NextResponse.json({
       ok: true,
@@ -113,15 +139,20 @@ export async function POST(req: NextRequest) {
         trackingNumber: shipment?.resultDeliveryNumber ?? null,
         buyerName: detail.buyer?.name ?? null,
         buyerEmail: detail.buyer?.email ?? null,
-        itemName: shipment?.shipmentItems?.[0]?.itemName ?? null,
-        skuCode: shipment?.shipmentItems?.[0]?.skuCode ?? null,
-        unitPrice: shipment?.shipmentItems?.[0]?.unitPrice ?? null,
-        quantity: shipment?.shipmentItems?.[0]?.quantity ?? null,
+        // 既存フィールド（互換性維持）
+        itemName: firstItem?.itemName ?? null,
+        skuCode: firstItem?.skuCode ?? null,
+        unitPrice: firstItem?.unitPrice ?? null,
+        quantity: firstItem?.quantity ?? null,
+        // ▼ 新規：全商品リスト ▼
+        items: allItems,
+        itemCount: allItems.length,
+        // ▲ 新規ここまで ▲
         resultDeliveryDate: shipment?.resultDeliveryDate ?? null,
         mallOrderDateTime: detail.mallOrderDateTime ?? null,
         totalPrice: detail.price?.totalPrice ?? null,
-　　　　address: addressParts.join(" ") || null,
-　　    postalCode: consignee?.postalCode ?? null, 
+        address: addressParts.join(" ") || null,
+        postalCode: consignee?.postalCode ?? null,
       },
     });
   } catch (e: any) {
