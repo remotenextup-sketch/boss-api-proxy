@@ -95,6 +95,12 @@ export async function POST(req: NextRequest) {
     }
 
     const shipment = detail.shipments?.[0];
+　　const consignee = shipment?.consignee;
+　　const addressParts = [
+ 　　 consignee?.prefecture,
+ 　　 consignee?.city,
+ 　　 consignee?.townAndStreet
+　　].filter(Boolean);
 
     return NextResponse.json({
       ok: true,
@@ -114,6 +120,8 @@ export async function POST(req: NextRequest) {
         resultDeliveryDate: shipment?.resultDeliveryDate ?? null,
         mallOrderDateTime: detail.mallOrderDateTime ?? null,
         totalPrice: detail.price?.totalPrice ?? null,
+　　　　address: addressParts.join(" ") || null,
+　　    postalCode: consignee?.postalCode ?? null, 
       },
     });
   } catch (e: any) {
