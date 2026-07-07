@@ -92,10 +92,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { inquiryNumber, message, dryRun = false } = body as {
+    const { inquiryNumber, message, dryRun = false, complete = true } = body as {
       inquiryNumber?: string;
       message?: string;
       dryRun?: boolean;
+      complete?: boolean;
     };
 
     // バリデーション
@@ -163,7 +164,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Step 2: 返信完了マーク（reply 成功後に必須）
+    // Step 2: 返信完了マーク（complete=true のときのみ実行）
+    if (!complete) {
+      return NextResponse.json({ ok: true, replied: true, completed: false });
+    }
+
     const completeRes = await fetch(RAKUTEN_EP_COMPLETE, {
       method: "PATCH",
       headers: {
