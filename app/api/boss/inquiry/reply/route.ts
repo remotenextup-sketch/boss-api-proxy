@@ -137,6 +137,7 @@ export async function POST(req: NextRequest) {
     const authHeader = buildEsaAuthHeader();
 
     // Step 1: 楽天へ返信
+    console.log(`[rakuten-reply] inquiryNumber=${inquiryNumber} shopId=${shopId} msgLen=${sanitized.length}`)
     const replyRes = await fetch(RAKUTEN_EP_REPLY, {
       method: "POST",
       headers: {
@@ -151,14 +152,16 @@ export async function POST(req: NextRequest) {
       }),
     });
 
+    const replyDetail = await replyRes.text();
+    console.log(`[rakuten-reply] reply status=${replyRes.status} body=${replyDetail.slice(0, 300)}`)
+
     if (replyRes.status !== 201) {
-      const detail = await replyRes.text();
       return NextResponse.json(
         {
           ok: false,
           reason: "rakuten_reply_failed",
           status: replyRes.status,
-          detail,
+          detail: replyDetail,
         },
         { status: 502 }
       );
@@ -181,6 +184,7 @@ export async function POST(req: NextRequest) {
 
     if (completeRes.status !== 200) {
       const detail = await completeRes.text();
+      console.log(`[rakuten-reply] complete status=${completeRes.status} body=${detail.slice(0, 300)}`);
       // reply は成功しているので ok:true だが警告を返す
       return NextResponse.json({
         ok: true,

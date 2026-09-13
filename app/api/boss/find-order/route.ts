@@ -2,10 +2,22 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getValidBossAccessToken } from "@/lib/bossToken";
 
 export async function POST(req: NextRequest) {
   try {
+    const configuredKey = process.env.BOSS_PROXY_API_KEY?.trim();
+    if (configuredKey) {
+      const providedKey = req.headers.get("x-api-key");
+      if (providedKey !== configuredKey) {
+        return NextResponse.json(
+          { ok: false, reason: "unauthorized" },
+          { status: 401 }
+        );
+      }
+    }
+
     const body = await req.json();
     const { mallOrderNumber, email } = body;
 
@@ -128,33 +140,46 @@ export async function POST(req: NextRequest) {
     // 代表商品（既存互換）
     const firstItem = allItems[0] ?? null;
 
-    return NextResponse.json({
-      ok: true,
-      order: {
-        orderId,
-        mallOrderNumber: detail.mallOrderNumber,
-        orderStatus: detail.orderStatus,
-        shipmentStatus: shipment?.shipmentStatus ?? null,
-        carrier: shipment?.resultDeliveryCompany ?? null,
-        trackingNumber: shipment?.resultDeliveryNumber ?? null,
-        buyerName: detail.buyer?.name ?? null,
-        buyerEmail: detail.buyer?.email ?? null,
-        // 既存フィールド（互換性維持）
-        itemName: firstItem?.itemName ?? null,
-        skuCode: firstItem?.skuCode ?? null,
-        unitPrice: firstItem?.unitPrice ?? null,
-        quantity: firstItem?.quantity ?? null,
-        // ▼ 新規：全商品リスト ▼
-        items: allItems,
-        itemCount: allItems.length,
-        // ▲ 新規ここまで ▲
-        resultDeliveryDate: shipment?.resultDeliveryDate ?? null,
-        mallOrderDateTime: detail.mallOrderDateTime ?? null,
-        totalPrice: detail.price?.totalPrice ?? null,
-        address: addressParts.join(" ") || null,
-        postalCode: consignee?.postalCode ?? null,
-      },
-    });
+    const orderPayload = {
+      orderId,
+      mallOrderNumber: detail.mallOrderNumber,
+      orderStatus: detail.orderStatus,
+      shipmentStatus: shipment?.shipmentStatus ?? null,
+      carrier: shipment?.resultDeliveryCompany ?? null,
+      trackingNumber: shipment?.resultDeliveryNumber ?? null,
+      buyerName: detail.buyer?.name ?? null,
+      buyerEmail: detail.buyer?.email ?? null,
+      // 既存フィールド（互換性維持）
+      itemName: firstItem?.itemName ?? null,
+      skuCode: firstItem?.skuCode ?? null,
+      unitPrice: firstItem?.unitPrice ?? null,
+      quantity: firstItem?.quantity ?? null,
+      // ▼ 新規：全商品リスト ▼
+      items: allItems,
+      itemCount: allItems.length,
+      // ▲ 新規ここまで ▲
+      resultDeliveryDate: shipment?.resultDeliveryDate ?? null,
+      mallOrderDateTime: detail.mallOrderDateTime ?? null,
+      totalPrice: detail.price?.totalPrice ?? null,
+      address: addressParts.join(" ") || null,
+      postalCode: consignee?.postalCode ?? null,
+    };
+
+    // fire-and-forget: レスポンス返却後も完走させる（Vercel waitUntil）
+    // 保存失敗しても CS 対応は止めない
+    waitUntil(
+      fetch(`${req.nextUrl.origin}/api/boss/sync-order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_channel: "rakuten",
+          mall_code: "rakuten",
+          order: orderPayload,
+        }),
+      }).catch((e) => console.error("[find-order] sync-order failed", e))
+    );
+
+    return NextResponse.json({ ok: true, order: orderPayload });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json(
