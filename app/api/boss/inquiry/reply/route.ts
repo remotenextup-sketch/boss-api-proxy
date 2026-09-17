@@ -92,12 +92,18 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { inquiryNumber, message, dryRun = false, complete = true } = body as {
+    const { inquiryNumber, message, dryRun = false, complete = true, attachments } = body as {
       inquiryNumber?: string;
       message?: string;
       dryRun?: boolean;
       complete?: boolean;
+      attachments?: Array<{ label?: string; path?: string }>;
     };
+
+    // 楽天は添付1件までしか受け付けない（複数指定すると400）
+    const validAttachments = (attachments ?? [])
+      .filter((a) => a && typeof a.label === "string" && typeof a.path === "string" && a.label && a.path)
+      .slice(0, 1) as Array<{ label: string; path: string }>;
 
     // バリデーション
     if (!inquiryNumber || !message) {
@@ -130,6 +136,7 @@ export async function POST(req: NextRequest) {
           shopId,
           message: sanitized,
           messageLength: sanitized.length,
+          attachments: validAttachments,
         },
       });
     }
@@ -137,7 +144,7 @@ export async function POST(req: NextRequest) {
     const authHeader = buildEsaAuthHeader();
 
     // Step 1: 楽天へ返信
-    console.log(`[rakuten-reply] inquiryNumber=${inquiryNumber} shopId=${shopId} msgLen=${sanitized.length}`)
+    console.log(`[rakuten-reply] inquiryNumber=${inquiryNumber} shopId=${shopId} msgLen=${sanitized.length} attachments=${validAttachments.length}`)
     const replyRes = await fetch(RAKUTEN_EP_REPLY, {
       method: "POST",
       headers: {
@@ -149,6 +156,7 @@ export async function POST(req: NextRequest) {
         inquiryNumber,
         shopId,
         message: sanitized,
+        ...(validAttachments.length > 0 ? { attachments: validAttachments } : {}),
       }),
     });
 
