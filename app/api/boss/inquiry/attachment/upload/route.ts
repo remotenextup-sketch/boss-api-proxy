@@ -120,7 +120,10 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         Authorization: buildEsaAuthHeader(),
-        Accept: "application/json",
+        Accept: "*/*",
+        // 楽天のサンプルに合わせて User-Agent を明示する。
+        // アップロードは別のWAFルールに当たることがあるため。
+        "User-Agent": "cs-platform/1.0",
         "Content-Type": `multipart/form-data; boundary=${boundary}`,
         "Content-Length": String(payload.length),
       },
