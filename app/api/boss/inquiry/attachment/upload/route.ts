@@ -18,6 +18,13 @@ const RAKUTEN_EP_ATTACHMENT = `${RAKUTEN_BASE}/es/1.0/inquirymng-api/attachment`
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_LABEL_LENGTH = 100;
 const ALLOWED_EXTENSIONS = ["png", "jpeg", "jpg", "gif", "pdf"];
+const MIME_BY_EXTENSION: Record<string, string> = {
+  png: "image/png",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  gif: "image/gif",
+  pdf: "application/pdf",
+};
 
 function buildEsaAuthHeader(): string {
   const serviceSecret = process.env.RAKUTEN_SERVICE_SECRET?.trim();
@@ -91,19 +98,33 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const upstream = new FormData();
-  upstream.append("file", file, name);
+  // multipart body を自前で組み立てる。
+  // FormData を fetch に渡すと Transfer-Encoding: chunked になり、
+  // 楽天のゲートウェイが Content-Length 無しのリクエストを弾く
+  // （GA0001 Un-Authorised が返る）ため、Content-Length を明示する。
+  const boundary = `----csplatform${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const contentType = file.type || MIME_BY_EXTENSION[ext] || "application/octet-stream";
+  const head = Buffer.from(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="${name}"\r\n` +
+      `Content-Type: ${contentType}\r\n\r\n`,
+    "utf-8"
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf-8");
+  const payload = Buffer.concat([head, fileBuffer, tail]);
 
   let res: Response;
   try {
     res = await fetch(RAKUTEN_EP_ATTACHMENT, {
       method: "POST",
       headers: {
-        // Content-Type は FormData に任せる（boundary が必要なため指定しない）
         Authorization: buildEsaAuthHeader(),
         Accept: "application/json",
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+        "Content-Length": String(payload.length),
       },
-      body: upstream,
+      body: payload,
     });
   } catch (e) {
     return NextResponse.json(
