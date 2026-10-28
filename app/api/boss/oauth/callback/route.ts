@@ -52,23 +52,29 @@ export async function GET(req: NextRequest) {
       }
     );
 
+    // 応答にはトークンが入るので、中身はログにも応答にも出さない
     const raw = await tokenRes.text();
-    console.log("BOSS token raw:", raw);
-    console.log("redirect_uri:", REDIRECT_URI);
 
     if (!tokenRes.ok) {
+      console.error("[oauth/callback] token exchange failed", tokenRes.status);
       return NextResponse.json(
-        { ok: false, message: "token exchange failed", raw },
-        { status: 500 }
+        { ok: false, message: "token exchange failed", status: tokenRes.status },
+        { status: 502 }
       );
     }
 
-    const json = JSON.parse(raw);
+    let json: any;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      json = null;
+    }
 
-    if (!json.access_token || !json.refresh_token || !json.expires_in) {
+    if (!json?.access_token || !json?.refresh_token || !json?.expires_in) {
+      console.error("[oauth/callback] invalid token response");
       return NextResponse.json(
-        { ok: false, message: "invalid token response", json },
-        { status: 500 }
+        { ok: false, message: "invalid token response" },
+        { status: 502 }
       );
     }
 
