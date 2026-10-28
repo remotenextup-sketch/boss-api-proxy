@@ -2,20 +2,23 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // app/api/boss/oauth/auto/route.ts
+import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
-
+import { requireProxyApiKey } from "@/lib/proxyAuth";
+import { OAUTH_STATE_PREFIX, OAUTH_STATE_TTL_SEC } from "@/lib/oauthState";
 
 /**
- * 使い方
- * 1) /api/boss/oauth/auto を開く
- * 2) 返ってきた sample_url をブラウザで開く
- * 3) BOSSログイン → 同意 → redirect_uri に ?code=... が付いて戻る
- * 4) /api/boss/oauth/callback が code を受け取り、token交換してKVに保存
+ * BOSS の再認証を始める (鍵が必要)
+ * 1) x-api-key を付けて /api/boss/oauth/auto を呼ぶ
+ *      curl -H "x-api-key: $BOSS_PROXY_API_KEY" https://<proxy>/api/boss/oauth/auto
+ * 2) 返ってきた sample_url を 10 分以内にブラウザで開く
+ * 3) BOSSログイン → 同意 → redirect_uri (/api/boss/oauth/callback) に code と state が付いて戻る
+ * 4) callback が state を照合 (1 回限り) してから token 交換し、KV に保存する
  */
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const code = searchParams.get("code");
+  const denied = requireProxyApiKey(req);
+  if (denied) return denied;
 
   const CLIENT_ID = process.env.BOSS_CLIENT_ID;
   const REDIRECT_URI = process.env.BOSS_REDIRECT_URI;
@@ -33,34 +36,21 @@ export async function GET(req: Request) {
   // を含める
   const scope = "openid offline_access order inventory mow-shipment";
 
+  // 使い捨ての state。callback で照合して消す (他人が用意した code を受け付けないため)
+  const state = randomBytes(32).toString("hex");
+  await kv.set(`${OAUTH_STATE_PREFIX}${state}`, "1", { ex: OAUTH_STATE_TTL_SEC });
+
   const sampleUrl =
     "https://auth.boss-oms.jp/realms/boss/protocol/openid-connect/auth" +
     `?client_id=${encodeURIComponent(CLIENT_ID)}` +
     `&response_type=code` +
     `&scope=${encodeURIComponent(scope)}` +
     `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
-    `&state=xyz123`;
+    `&state=${state}`;
 
-  // code が無い場合は「認可URL」を返すだけ（このルートの役割）
-  if (!code) {
-    return NextResponse.json({
-      ok: false,
-      message:
-        "認可コードがありません。sample_url をブラウザで開いてBOSS認可を行い、redirect_uri に付与される code を取得してください。",
-      sample_url: sampleUrl,
-      note:
-        "※この /auto は認可URLの提示用です。code→token交換は /api/boss/oauth/callback で実施します。",
-    });
-  }
-
-  // もし誤って /auto?code=... を叩いた場合も、次に何をすべきか分かるように案内だけ返す
   return NextResponse.json({
     ok: true,
-    message:
-      "code を受け取りました。この code を使った token 交換は /api/boss/oauth/callback が担当です。redirect_uri は callback を指す設定にしてください。",
-    code,
-    next: "/api/boss/oauth/callback?code=xxxx",
+    message: `sample_url を ${OAUTH_STATE_TTL_SEC / 60} 分以内にブラウザで開き、BOSS で認可してください。`,
     sample_url: sampleUrl,
   });
 }
-

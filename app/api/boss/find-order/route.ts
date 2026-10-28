@@ -4,20 +4,14 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { getValidBossAccessToken } from "@/lib/bossToken";
+import { requireProxyApiKey } from "@/lib/proxyAuth";
+import { syncOrderToSupabase } from "@/lib/syncOrder";
 
 export async function POST(req: NextRequest) {
-  try {
-    const configuredKey = process.env.BOSS_PROXY_API_KEY?.trim();
-    if (configuredKey) {
-      const providedKey = req.headers.get("x-api-key");
-      if (providedKey !== configuredKey) {
-        return NextResponse.json(
-          { ok: false, reason: "unauthorized" },
-          { status: 401 }
-        );
-      }
-    }
+  const denied = requireProxyApiKey(req);
+  if (denied) return denied;
 
+  try {
     const body = await req.json();
     const { mallOrderNumber, email } = body;
 
@@ -168,15 +162,15 @@ export async function POST(req: NextRequest) {
     // fire-and-forget: レスポンス返却後も完走させる（Vercel waitUntil）
     // 保存失敗しても CS 対応は止めない
     waitUntil(
-      fetch(`${req.nextUrl.origin}/api/boss/sync-order`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source_channel: "rakuten",
-          mall_code: "rakuten",
-          order: orderPayload,
-        }),
-      }).catch((e) => console.error("[find-order] sync-order failed", e))
+      syncOrderToSupabase({
+        source_channel: "rakuten",
+        mall_code: "rakuten",
+        order: orderPayload,
+      })
+        .then((r: any) => {
+          if (r?.ok === false) console.error("[find-order] sync-order failed", r);
+        })
+        .catch((e) => console.error("[find-order] sync-order failed", e))
     );
 
     return NextResponse.json({ ok: true, order: orderPayload });

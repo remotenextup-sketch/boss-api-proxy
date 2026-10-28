@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireProxyApiKey } from "@/lib/proxyAuth";
 
 const RAKUTEN_BASE = "https://api.rms.rakuten.co.jp";
 const RAKUTEN_EP_INQUIRIES = `${RAKUTEN_BASE}/es/1.0/inquirymng-api/inquiries`;
@@ -17,16 +18,10 @@ function buildEsaAuthHeader(): string {
   );
 }
 
-function verifyApiKey(req: NextRequest): boolean {
-  const proxyKey = process.env.BOSS_PROXY_API_KEY?.trim();
-  if (!proxyKey) return true;
-  return req.headers.get("x-api-key")?.trim() === proxyKey;
-}
 
 export async function GET(req: NextRequest) {
-  if (!verifyApiKey(req)) {
-    return NextResponse.json({ ok: false, reason: "Unauthorized" }, { status: 401 });
-  }
+  const denied = requireProxyApiKey(req);
+  if (denied) return denied;
 
   let authHeader: string;
   try {

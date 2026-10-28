@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireProxyApiKey } from "@/lib/proxyAuth";
 
 const RAKUTEN_BASE = "https://api.rms.rakuten.co.jp";
 const RAKUTEN_EP_REPLY = `${RAKUTEN_BASE}/es/1.0/inquirymng-api/inquiry/reply`;
@@ -78,17 +79,8 @@ function sanitizeMessage(s: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  // プロキシAPIキー認証
-  const configuredKey = process.env.BOSS_PROXY_API_KEY?.trim();
-  if (configuredKey) {
-    const providedKey = req.headers.get("x-api-key");
-    if (providedKey !== configuredKey) {
-      return NextResponse.json(
-        { ok: false, reason: "unauthorized" },
-        { status: 401 }
-      );
-    }
-  }
+  const denied = requireProxyApiKey(req);
+  if (denied) return denied;
 
   try {
     const body = await req.json();

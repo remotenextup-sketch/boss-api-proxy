@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireProxyApiKey } from "@/lib/proxyAuth";
 
 // ライセンスキーの有効期限を取得する（LicenseManagementAPI: license.expiryDate.get）。
 // 問い合わせ管理APIを使うとライセンスキーの有効期限は90日で、
@@ -33,12 +34,6 @@ function buildEsaAuthHeader(): string {
   );
 }
 
-function verifyApiKey(req: NextRequest): boolean {
-  const proxyKey = process.env.BOSS_PROXY_API_KEY?.trim();
-  if (!proxyKey) return true;
-  const provided = req.headers.get("x-api-key")?.trim();
-  return provided === proxyKey;
-}
 
 /** レスポンス構造が変わっても拾えるよう、日付らしき値を再帰的に探す */
 function findExpiryDate(value: unknown): string | null {
@@ -68,9 +63,8 @@ function findExpiryDate(value: unknown): string | null {
 }
 
 export async function GET(req: NextRequest) {
-  if (!verifyApiKey(req)) {
-    return NextResponse.json({ ok: false, reason: "Unauthorized" }, { status: 401 });
-  }
+  const denied = requireProxyApiKey(req);
+  if (denied) return denied;
 
   const configured = process.env.RAKUTEN_EP_LICENSE_EXPIRY?.trim();
   const candidates = configured ? [configured] : candidateUrls();
