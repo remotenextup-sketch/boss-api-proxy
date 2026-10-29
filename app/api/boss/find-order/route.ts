@@ -2,10 +2,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { waitUntil } from "@vercel/functions";
 import { getValidBossAccessToken } from "@/lib/bossToken";
 import { requireProxyApiKey } from "@/lib/proxyAuth";
-import { syncOrderToSupabase } from "@/lib/syncOrder";
 
 export async function POST(req: NextRequest) {
   const denied = requireProxyApiKey(req);
@@ -159,20 +157,7 @@ export async function POST(req: NextRequest) {
       postalCode: consignee?.postalCode ?? null,
     };
 
-    // fire-and-forget: レスポンス返却後も完走させる（Vercel waitUntil）
-    // 保存失敗しても CS 対応は止めない
-    waitUntil(
-      syncOrderToSupabase({
-        source_channel: "rakuten",
-        mall_code: "rakuten",
-        order: orderPayload,
-      })
-        .then((r: any) => {
-          if (r?.ok === false) console.error("[find-order] sync-order failed", r);
-        })
-        .catch((e) => console.error("[find-order] sync-order failed", e))
-    );
-
+    // 注文の保存はしない (取得して返すだけ)。保存は呼び出し側の cs-platform が行う
     return NextResponse.json({ ok: true, order: orderPayload });
   } catch (e: any) {
     console.error(e);
