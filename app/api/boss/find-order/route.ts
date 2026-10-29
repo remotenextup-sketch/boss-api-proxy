@@ -3,8 +3,12 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getValidBossAccessToken } from "@/lib/bossToken";
+import { requireProxyApiKey } from "@/lib/proxyAuth";
 
 export async function POST(req: NextRequest) {
+  const denied = requireProxyApiKey(req);
+  if (denied) return denied;
+
   try {
     const body = await req.json();
     const { mallOrderNumber, email } = body;

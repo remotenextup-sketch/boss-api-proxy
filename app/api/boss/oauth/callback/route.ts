@@ -1,6 +1,7 @@
 // app/api/boss/oauth/callback/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
+import { OAUTH_STATE_PREFIX } from "@/lib/oauthState";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,10 +16,27 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const code = searchParams.get("code");
+    const state = searchParams.get("state");
 
     if (!code) {
       return NextResponse.json(
         { ok: false, message: "no code" },
+        { status: 400 }
+      );
+    }
+
+    // ブラウザが戻ってくる先なので API キーは付けられない。代わりに、oauth/auto (鍵が必要) が作った
+    // 使い捨ての state と一致するときだけ受け付ける。照合と同時に消すので、同じ state は 2 回使えない
+    if (!state || !/^[0-9a-f]{64}$/.test(state)) {
+      return NextResponse.json(
+        { ok: false, message: "invalid state" },
+        { status: 400 }
+      );
+    }
+    const issued = await kv.getdel(`${OAUTH_STATE_PREFIX}${state}`);
+    if (!issued) {
+      return NextResponse.json(
+        { ok: false, message: "invalid state" },
         { status: 400 }
       );
     }
@@ -52,23 +70,29 @@ export async function GET(req: NextRequest) {
       }
     );
 
+    // 応答にはトークンが入るので、中身はログにも応答にも出さない
     const raw = await tokenRes.text();
-    console.log("BOSS token raw:", raw);
-    console.log("redirect_uri:", REDIRECT_URI);
 
     if (!tokenRes.ok) {
+      console.error("[oauth/callback] token exchange failed", tokenRes.status);
       return NextResponse.json(
-        { ok: false, message: "token exchange failed", raw },
-        { status: 500 }
+        { ok: false, message: "token exchange failed", status: tokenRes.status },
+        { status: 502 }
       );
     }
 
-    const json = JSON.parse(raw);
+    let json: any;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      json = null;
+    }
 
-    if (!json.access_token || !json.refresh_token || !json.expires_in) {
+    if (!json?.access_token || !json?.refresh_token || !json?.expires_in) {
+      console.error("[oauth/callback] invalid token response");
       return NextResponse.json(
-        { ok: false, message: "invalid token response", json },
-        { status: 500 }
+        { ok: false, message: "invalid token response" },
+        { status: 502 }
       );
     }
 
