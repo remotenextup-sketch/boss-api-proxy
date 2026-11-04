@@ -23,7 +23,7 @@ await t('出荷ごとに状態・伝票番号・明細を分けて返す（2 件
   assert.equal(o.orderStatus, '交換対応中')
   assert.deepEqual(o.shipments.map((s) => [s.index, s.shipmentId, s.shipmentStatus, s.deliveryNumber, s.allZeroPrice]), [[1, '9001', '出荷済', '1111', false], [2, '9002', '在庫引当済', null, true]])
   assert.deepEqual(o.shipments[1].items, [{ itemName: 'マット', skuCode: '0930', unitPrice: 0, quantity: 1 }])
-  assert.equal(o.shipments[0].consignee.address, '東京都 新宿区 1-2-3')
+  assert.deepEqual(o.shipments[0].consignee, { postalCode: '123-4567' })
 })
 await t('出荷 ID の項目名を記録する（名前が違っても候補から探す）', () => {
   const o = normalizeOrderShipments({ shipments: [{ shipmentNo: 'S-1', shipmentItems: [] }, { id: 7, shipmentItems: [] }, { shipmentItems: [] }] }, 1)!

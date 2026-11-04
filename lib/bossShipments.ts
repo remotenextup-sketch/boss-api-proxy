@@ -5,6 +5,7 @@
 //
 // 出荷 ID の項目名は BOSS の仕様書が無く未確認のため、候補の名前を順に探し、どの名前で見つかったかも返す。
 // 知らない項目は「名前だけ」返す（値は返さない）。実際の応答の形を確かめてから、取り出す項目を確定する。
+// 個人情報は返さない（購入者・配送先の氏名・住所・電話・メール）。配送先は照合に使う郵便番号だけ。
 // BOSS への書き込みはしない。
 
 export type BossShipmentItem = {
@@ -24,7 +25,8 @@ export type BossShipment = {
   deliveryCompany: string | null
   deliveryNumber: string | null
   deliveryDate: string | null
-  consignee: { name: string | null; postalCode: string | null; address: string | null }
+  /** 配送先は照合に使う郵便番号だけ（氏名・住所・電話は返さない） */
+  consignee: { postalCode: string | null }
   items: BossShipmentItem[]
   /** 明細がすべて 0 円（BOSS の「商品交換」で作られる出荷の特徴） */
   allZeroPrice: boolean
@@ -61,7 +63,6 @@ export function normalizeShipment(raw: unknown, index: number): BossShipment {
   const s = isObj(raw) ? raw : {}
   const idKey = SHIPMENT_ID_KEYS.find((k) => str(s[k]) != null) ?? null
   const c = isObj(s.consignee) ? s.consignee : {}
-  const address = [c.prefecture, c.city, c.townAndStreet].map(str).filter(Boolean).join(' ') || null
   const items = (Array.isArray(s.shipmentItems) ? s.shipmentItems : []).map((it) => {
     const i = isObj(it) ? it : {}
     return { itemName: str(i.itemName) ?? '', skuCode: str(i.skuCode) ?? '', unitPrice: num(i.unitPrice), quantity: num(i.quantity) }
@@ -74,7 +75,7 @@ export function normalizeShipment(raw: unknown, index: number): BossShipment {
     deliveryCompany: str(s.resultDeliveryCompany),
     deliveryNumber: str(s.resultDeliveryNumber),
     deliveryDate: str(s.resultDeliveryDate),
-    consignee: { name: str(c.name), postalCode: str(c.postalCode), address },
+    consignee: { postalCode: str(c.postalCode) },
     items,
     allZeroPrice: items.length > 0 && items.every((i) => i.unitPrice === 0),
     otherKeys: Object.keys(s).filter((k) => !KNOWN_SHIPMENT_KEYS.has(k)).sort(),
