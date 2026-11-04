@@ -44,13 +44,14 @@ export type BossOrderShipments = {
   otherOrderKeys: string[]
 }
 
-export const SHIPMENT_ID_KEYS = ['shipmentId', 'shipmentNo', 'shipmentNumber', 'shipmentCode', 'id'] as const
+// shipmentID は 2026-11-04 に実際の応答（交換後の注文 1 件）で項目名だけ確認した。値・一意性は未確認
+export const SHIPMENT_ID_KEYS = ['shipmentID', 'shipmentId', 'shipmentNo', 'shipmentNumber', 'shipmentCode', 'id'] as const
 
 const KNOWN_SHIPMENT_KEYS = new Set<string>([
   ...SHIPMENT_ID_KEYS, 'shipmentStatus', 'resultDeliveryCompany', 'resultDeliveryNumber', 'resultDeliveryDate', 'consignee', 'shipmentItems',
 ])
 const KNOWN_ORDER_KEYS = new Set<string>([
-  'orderId', 'id', 'mallOrderNumber', 'orderStatus', 'shipments',
+  'orderId', 'orderID', 'id', 'mallOrderNumber', 'orderStatus', 'shipments',
   // find-order が使っている項目（お客様の情報はここでは返さない）
   'buyer', 'price', 'mallOrderDateTime',
 ])

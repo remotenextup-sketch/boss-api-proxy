@@ -29,6 +29,10 @@ await t('出荷 ID の項目名を記録する（名前が違っても候補か�
   const o = normalizeOrderShipments({ shipments: [{ shipmentNo: 'S-1', shipmentItems: [] }, { id: 7, shipmentItems: [] }, { shipmentItems: [] }] }, 1)!
   assert.deepEqual(o.shipments.map((s) => [s.shipmentId, s.shipmentIdKey]), [['S-1', 'shipmentNo'], ['7', 'id'], [null, null]])
 })
+await t('BOSS の実際の項目名 shipmentID（ID が大文字）を出荷 ID として読む', () => {
+  const o = normalizeOrderShipments({ orderID: 5, shipments: [{ shipmentID: 777, shipmentItems: [] }] }, 5)!
+  assert.deepEqual([o.shipments[0].shipmentId, o.shipments[0].shipmentIdKey, o.otherOrderKeys], ['777', 'shipmentID', []])
+})
 await t('知らない項目は名前だけ返し、値は返さない（交換の印を探すため）', () => {
   const o = normalizeOrderShipments(exchangeOrder, 101)!
   assert.deepEqual(o.otherOrderKeys, ['exchangeFlag'])
