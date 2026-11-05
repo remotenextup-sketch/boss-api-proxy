@@ -6,7 +6,8 @@ export const fake = {
   throwAfterApply: 0, // boss:token の set を、書いたのに失敗として返す回数（成否不明）
   evalFails: false, // スクリプト（eval）が使えない KV
   lockOps: [], // ロックのキーへの操作の記録（get・set・del・eval）
-  reset() { store.clear(); this.failSetToken = 0; this.throwAfterApply = 0; this.evalFails = false; this.lockOps = [] },
+  down: false, // KV が止まっている（すべての命令が失敗する）
+  reset() { store.clear(); this.failSetToken = 0; this.throwAfterApply = 0; this.evalFails = false; this.lockOps = []; this.down = false },
   lock() { return alive('boss:token:refreshing')?.v ?? null },
   token() { return alive('boss:token')?.v ?? null },
 }
@@ -18,7 +19,8 @@ function alive(k) {
 }
 const clone = (v) => (v === undefined ? null : JSON.parse(JSON.stringify(v)))
 const tick = () => new Promise((r) => setTimeout(r, 2))
-const rec = (op, k) => { if (k === 'boss:token:refreshing') fake.lockOps.push(op) }
+const rec = (op, k) => {
+  if (fake.down) throw new Error('fake kv: down'); if (k === 'boss:token:refreshing') fake.lockOps.push(op) }
 export const kv = {
   async get(k) { await tick(); rec('get', k); const e = alive(k); return e ? clone(e.v) : null },
   async set(k, v, o = {}) {
@@ -26,10 +28,13 @@ export const kv = {
     rec('set', k)
     if (k === 'boss:token' && fake.failSetToken > 0) { fake.failSetToken--; throw new Error('fake kv: set failed') }
     if (o.nx && alive(k)) return null
-    store.set(k, { v: clone(v), exp: o.ex ? Date.now() + o.ex * 1000 : 0 })
+    store.set(k, { v: clone(v), exp: o.ex ? Date.now() + o.ex * 1000 : o.px ? Date.now() + o.px : 0 })
     if (k === 'boss:token' && fake.throwAfterApply > 0) { fake.throwAfterApply--; throw new Error('fake kv: timeout after write') }
     return 'OK'
   },
+  async incr(k) { await tick(); rec('incr', k); const e = alive(k); const n = (e ? Number(e.v) : 0) + 1; store.set(k, { v: n, exp: e?.exp ?? 0 }); return n },
+  async expire(k, sec) { await tick(); rec('expire', k); const e = alive(k); if (!e) return 0; e.exp = Date.now() + sec * 1000; return 1 },
+  async pttl(k) { await tick(); rec('pttl', k); const e = alive(k); if (!e) return -2; return e.exp ? e.exp - Date.now() : -1 },
   async del(k) { await tick(); rec('del', k); return store.delete(k) ? 1 : 0 },
   async eval(script, keys, args) {
     await tick()
