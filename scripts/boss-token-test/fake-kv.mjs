@@ -7,7 +7,8 @@ export const fake = {
   evalFails: false, // スクリプト（eval）が使えない KV
   lockOps: [], // ロックのキーへの操作の記録（get・set・del・eval）
   down: false, // KV が止まっている（すべての命令が失敗する）
-  reset() { store.clear(); this.failSetToken = 0; this.throwAfterApply = 0; this.evalFails = false; this.lockOps = []; this.down = false },
+  beforeSet: null, // set の直前に待たせる（競合の再現用）。async (key, opts) => {}
+  reset() { store.clear(); this.failSetToken = 0; this.throwAfterApply = 0; this.evalFails = false; this.lockOps = []; this.down = false; this.beforeSet = null },
   lock() { return alive('boss:token:refreshing')?.v ?? null },
   token() { return alive('boss:token')?.v ?? null },
 }
@@ -25,6 +26,7 @@ export const kv = {
   async get(k) { await tick(); rec('get', k); const e = alive(k); return e ? clone(e.v) : null },
   async set(k, v, o = {}) {
     await tick()
+    if (fake.beforeSet) await fake.beforeSet(k, o)
     rec('set', k)
     if (k === 'boss:token' && fake.failSetToken > 0) { fake.failSetToken--; throw new Error('fake kv: set failed') }
     if (o.nx && alive(k)) return null

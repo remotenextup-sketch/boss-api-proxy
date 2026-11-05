@@ -267,15 +267,52 @@ await t('BOSS が 429（Retry-After 120）→ 429 rate_limited・120 秒休止�
   assert.ok(again.body.retryAfterSec > 100 && again.body.retryAfterSec <= 120)
   assert.equal(invCalls().length, 1)
   assert.equal(kc.calls, 0)
+  assert.equal(fake.store.get('boss:inv:lock')?.v, 'cooldown', '休止がロックに入っていない')
 })
-await t('429 が続くと休止を倍に（60 → 120 → 240 秒、上限 900 秒）。成功で最初に戻す', async () => {
-  const secs: number[] = []
-  for (let i = 0; i < 5; i++) secs.push(await limiter.startCooldown(null))
-  assert.deepEqual(secs, [60, 120, 240, 480, 900])
-  fake.store.delete('boss:inv:cooldown')
+await t('休止の印の読み取りが古くても（表示用のキーが見えなくても）、ロックで止まり BOSS は呼ばない', async () => {
+  bossInv.status = 429; bossInv.raw = ''
   await call()
+  fake.store.delete('boss:inv:cooldown') // 早めの打ち切りに使う読み取りが「休止なし」を返す状態
+  bossInv.status = 200; bossInv.raw = null
+  const r = await call()
+  assert.equal(r.status, 429)
+  assert.equal(r.body.reason, 'cooling_down')
+  assert.ok(r.body.retryAfterSec >= 59)
+  assert.equal(invCalls().length, 1)
+})
+await t('休止の確認を通ったあとに別の呼び出しが 429 を受けても、そのあとロックを取ろうとした時点で止まる', async () => {
+  bossInv.status = 429; bossInv.raw = ''; bossInv.delayMs = 300
+  let aDone!: () => void
+  const aFinished = new Promise<void>((r) => { aDone = r })
+  const a = call().then((x) => { aDone(); return x })
+  await sleep(100) // a はロックを持って BOSS を呼んでいる最中
+  // b は休止の確認（まだ休止なし）とトークンを通過し、ロックを取る直前で a の終わりを待つ
+  fake.beforeSet = async (k: string, o: { nx?: boolean }) => { if (k === 'boss:inv:lock' && o?.nx) await aFinished }
+  const b = await call()
+  const ra = await a
+  assert.equal(ra.body.reason, 'rate_limited')
+  assert.equal(b.status, 429)
+  assert.equal(b.body.reason, 'cooling_down')
+  assert.equal(invCalls().length, 1, 'b が休止中に BOSS を呼んだ')
+})
+await t('429 が続くと休止を倍に（60 → 120 → 240 → 480 → 900 秒、上限 900 秒）。成功で最初に戻す', async () => {
+  const secs: number[] = []
+  for (let i = 0; i < 5; i++) {
+    fake.store.delete('boss:inv:lock'); fake.store.delete('boss:inv:gap')
+    const got = await limiter.acquireInventorySlot()
+    assert.ok(got.ok)
+    secs.push(await got.slot.startCooldown(null))
+    await got.slot.release()
+    assert.equal(fake.store.get('boss:inv:lock')?.v, 'cooldown', 'release が休止の印を消した')
+  }
+  assert.deepEqual(secs, [60, 120, 240, 480, 900])
+  fake.store.delete('boss:inv:lock'); fake.store.delete('boss:inv:cooldown'); fake.store.delete('boss:inv:gap')
+  assert.equal((await call()).status, 200)
   assert.equal(fake.store.get('boss:inv:cooldown_level'), undefined)
-  assert.equal(await limiter.startCooldown(null), 60)
+})
+await t('BOSS の Retry-After が休止の段階より長ければそちら（上限 900 秒）', async () => {
+  bossInv.status = 429; bossInv.raw = ''; bossInv.headers = { 'retry-after': '5000' }
+  assert.equal((await call()).body.retryAfterSec, 900)
 })
 
 // ---- 6. 間隔・同時実行・1 日の上限（暫定の運用制限） ----
@@ -318,6 +355,23 @@ await t('ロックの期限が切れて別の呼び出しが取り直したら�
   const lockWhileSecond = fake.store.get('boss:inv:lock')?.v
   await Promise.all([first, second])
   assert.ok(lockWhileSecond, '古い呼び出しが新しいロックを消した')
+})
+await t('同時に 6 つ来ても、BOSS を呼ぶのは 1 つだけ。残りは 429 busy、1 日の回数も 1 だけ増える', async () => {
+  bossInv.delayMs = 300
+  const rs = await Promise.all(Array.from({ length: 6 }, () => call()))
+  assert.equal(rs.filter((r) => r.status === 200).length, 1)
+  assert.equal(rs.filter((r) => r.status === 429 && r.body.reason === 'busy').length, 5)
+  assert.equal(invCalls().length, 1)
+  const key = [...fake.store.keys()].find((k: string) => k.startsWith('boss:inv:daily:'))
+  assert.equal(fake.store.get(key).v, 1)
+})
+await t('間隔のキーが切れた直後に 2 つ同時に来ても、通るのは 1 つだけ', async () => {
+  limiter.inventoryLimits.minIntervalMs = 200
+  await call()
+  await sleep(250)
+  const rs = await Promise.all([call(), call()])
+  assert.equal(rs.filter((r) => r.status === 200).length, 1)
+  assert.equal(invCalls().length, 2)
 })
 await t('ロックを外すスクリプト（eval）が失敗しても、応答は成功のまま。GET → DEL はせず、期限で消える', async () => {
   limiter.inventoryLimits.lockTtlMs = 400

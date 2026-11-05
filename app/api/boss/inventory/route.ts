@@ -15,7 +15,6 @@ import {
   cooldownRemainingSec,
   inventoryLimits,
   resetCooldownLevel,
-  startCooldown,
   type InventorySlot,
 } from '@/lib/inventoryLimiter'
 
@@ -40,7 +39,7 @@ export async function GET(req: NextRequest) {
 
   let slot: InventorySlot | null = null
   try {
-    // 休止中ならトークンも取らずに止める
+    // 休止中ならトークンも取らずに止める（早めの打ち切り。止める最終判断は acquireInventorySlot のロック）
     const rest = await cooldownRemainingSec()
     if (rest > 0) return reply({ ok: false, reason: 'cooling_down', retryAfterSec: rest }, 429, rest)
 
@@ -73,7 +72,7 @@ export async function GET(req: NextRequest) {
       return reply(r)
     }
     if (r.kind === 'http' && r.status === 429) {
-      const sec = await startCooldown(r.retryAfterSec)
+      const sec = await slot.startCooldown(r.retryAfterSec)
       log('rate_limited', { retryAfterSec: sec })
       return reply({ ok: false, reason: 'rate_limited', retryAfterSec: sec }, 429, sec)
     }
