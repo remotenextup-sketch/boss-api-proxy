@@ -4,7 +4,8 @@ export const fake = {
   store,
   failSetToken: 0, // boss:token の set を、書かずに失敗させる回数
   throwAfterApply: 0, // boss:token の set を、書いたのに失敗として返す回数（成否不明）
-  reset() { store.clear(); this.failSetToken = 0; this.throwAfterApply = 0 },
+  evalFails: false, // スクリプト（eval）が使えない KV
+  reset() { store.clear(); this.failSetToken = 0; this.throwAfterApply = 0; this.evalFails = false },
   lock() { return alive('boss:token:refreshing')?.v ?? null },
   token() { return alive('boss:token')?.v ?? null },
 }
@@ -29,6 +30,7 @@ export const kv = {
   async del(k) { await tick(); return store.delete(k) ? 1 : 0 },
   async eval(script, keys, args) {
     await tick()
+    if (fake.evalFails) throw new Error('fake kv: eval not supported')
     if (!/redis\.call\("get", KEYS\[1\]\) == ARGV\[1\]/.test(script)) throw new Error('fake kv: unexpected script')
     const e = alive(keys[0])
     if (e && e.v === args[0]) { store.delete(keys[0]); return 1 }

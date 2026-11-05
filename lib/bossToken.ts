@@ -75,8 +75,21 @@ async function sleep(ms: number) {
 // 同じインスタンスの中で同時に来た更新は 1 つにまとめる（インスタンスをまたぐ分は KV のロック）
 let inflight: Promise<string> | null = null;
 
+// 更新できたのに KV へ保存できなかったトークン。BOSS 側では更新用トークンがもう入れ替わっているので、
+// これが唯一の新しい更新用トークンになりうる。このインスタンスで使い続け、次の呼び出しで保存をやり直す
+let unsaved: BossToken | null = null;
+
+function newer(a: BossToken | null, b: BossToken | null): BossToken | null {
+  if (!a) return b;
+  if (!b) return a;
+  return b.expires_at > a.expires_at ? b : a;
+}
+
 export async function getValidBossAccessToken(): Promise<string> {
-  const token = await kv.get<BossToken>(TOKEN_KEY);
+  if (unsaved) {
+    await retrySaveUnsaved();
+  }
+  const token = newer(await kv.get<BossToken>(TOKEN_KEY), unsaved);
 
   // ---- 有効なら即返す ----
   if (isFresh(token)) {
@@ -105,7 +118,7 @@ async function obtainFreshToken(seen: BossToken | null): Promise<string> {
 
   try {
     // ロック取得後に再度トークン確認（他プロセスが直前に更新した可能性）
-    const token = await kv.get<BossToken>(TOKEN_KEY);
+    const token = newer(await kv.get<BossToken>(TOKEN_KEY), unsaved);
     if (isFresh(token)) {
       return token!.access_token;
     }
@@ -207,14 +220,49 @@ async function refreshAndSave(token: BossToken): Promise<string> {
 
   // BOSS 側では更新用トークンがもう入れ替わっている。保存できないと次の更新で使えないので、やり直す
   if (await saveToken(newToken)) {
+    unsaved = null;
     console.info("✅ BOSS token refreshed");
   } else {
+    // 失敗にしても入れ替わった更新用トークンは戻らない。この呼び出しは新しいトークンで続け、
+    // このインスタンスに持っておいて次の呼び出しで保存をやり直す
+    unsaved = newToken;
     console.error(
-      "❌ BOSS token refreshed but token_save_failed: the new refresh token could not be stored; BOSS re-auth may be required"
+      "❌ BOSS token refreshed but token_save_failed: the new refresh token is kept in this instance only and will be saved on the next call; BOSS re-auth may be required if this instance stops first"
     );
   }
-  // この呼び出しは新しいトークンで続ける
   return newToken.access_token;
+}
+
+// 保存できなかったトークンの保存をやり直す。ロックが取れたときだけ（更新中の相手がいれば次の機会に）。
+// KV にもっと新しいトークンがあれば（別の更新が済んだ）、持っていたものは捨てる
+async function retrySaveUnsaved() {
+  const pending = unsaved;
+  if (!pending) return;
+  const lockId = randomUUID();
+  try {
+    const acquired = await kv.set(REFRESH_LOCK_KEY, lockId, {
+      nx: true,
+      ex: bossTokenTiming.lockTtlSec,
+    });
+    if (!acquired) return;
+  } catch {
+    return;
+  }
+  try {
+    const current = await kv.get<BossToken>(TOKEN_KEY);
+    if (current && current.expires_at >= pending.expires_at) {
+      if (unsaved === pending) unsaved = null;
+      return;
+    }
+    if (await saveToken(pending)) {
+      if (unsaved === pending) unsaved = null;
+      console.info("✅ BOSS token saved on retry");
+    }
+  } catch {
+    // 次の呼び出しでまたやり直す
+  } finally {
+    await releaseLock(lockId);
+  }
 }
 
 async function saveToken(newToken: BossToken): Promise<boolean> {
@@ -241,6 +289,14 @@ const RELEASE_LOCK_SCRIPT = `if redis.call("get", KEYS[1]) == ARGV[1] then retur
 async function releaseLock(lockId: string) {
   try {
     await kv.eval(RELEASE_LOCK_SCRIPT, [REFRESH_LOCK_KEY], [lockId]);
+    return;
+  } catch {
+    // スクリプトが使えないときは、読んで自分のロックなら消す（読んでから消すまでの間に切れて取り直される、ごく短い隙はある）
+  }
+  try {
+    if ((await kv.get<string>(REFRESH_LOCK_KEY)) === lockId) {
+      await kv.del(REFRESH_LOCK_KEY);
+    }
   } catch {
     // 外せなくても期限（lockTtlSec）で消える
   }

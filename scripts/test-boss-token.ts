@@ -43,7 +43,7 @@ function stored(ageSec: number, life = 300) {
 
 // ---- 偽の BOSS 認証サーバー（と BOSS API） ----
 type Mode = 'ok' | 'invalid_grant' | 'server_error' | 'hang' | 'no_refresh_token'
-const kc = { calls: 0, delayMs: 0, mode: 'ok' as Mode, usedRefresh: [] as string[] }
+const kc = { calls: 0, delayMs: 0, mode: 'ok' as Mode, usedRefresh: [] as string[], life: 300 }
 const boss = { calls: 0, auth: [] as string[] }
 const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((res, rej) => {
   const t = setTimeout(res, ms)
@@ -67,7 +67,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const iat = nowSec()
   const rt = `rt-new-${++seq}-SECRET`
   secrets.add(rt)
-  const body: Record<string, unknown> = { access_token: jwt(iat, iat + 300), expires_in: 300 }
+  const body: Record<string, unknown> = { access_token: jwt(iat, iat + kc.life), expires_in: kc.life }
   if (kc.mode !== 'no_refresh_token') body.refresh_token = rt
   return new Response(JSON.stringify(body), { status: 200 })
 }) as typeof fetch
@@ -75,7 +75,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 // ---- 実行の枠 ----
 const results: Array<{ name: string; ok: boolean; detail?: string }> = []
 async function t(name: string, fn: () => Promise<void>, opts: { timeoutMs?: number } = {}) {
-  fake.reset(); Object.assign(kc, { calls: 0, delayMs: 0, mode: 'ok', usedRefresh: [] }); Object.assign(boss, { calls: 0, auth: [] })
+  fake.reset(); Object.assign(kc, { calls: 0, delayMs: 0, mode: 'ok', usedRefresh: [], life: 300 }); Object.assign(boss, { calls: 0, auth: [] })
   const limit = opts.timeoutMs ?? 20_000
   let timer: NodeJS.Timeout | undefined
   try {
@@ -238,6 +238,51 @@ await t('KV への保存が全部失敗 → この呼び出しは新しいトー
   assert.ok(logs.slice(before).some((l) => /token_save_failed/.test(l)), '保存の失敗が記録されていない')
   assert.equal(fake.lock(), null)
 })
+
+await t('保存が全部失敗 → 同じインスタンスの次の呼び出しで、持っていたトークンを KV に保存し直す（更新はしない）', async () => {
+  fake.store.set('boss:token', { v: stored(400), exp: 0 }); fake.failSetToken = 99
+  const m = await load()
+  const a = await m.getValidBossAccessToken()
+  fake.failSetToken = 0 // KV が戻った
+  const b = await m.getValidBossAccessToken()
+  assert.equal(b, a)
+  assert.equal(kc.calls, 1, `更新が ${kc.calls} 回走った`)
+  assert.equal(fake.token()?.access_token, a, '保存し直していない')
+  assert.match(fake.token().refresh_token, /^rt-new-/)
+  assert.equal(fake.lock(), null)
+})
+await t('保存できないまま期限が来たら、KV の古いものではなく持っていた新しい更新用トークンで更新する', async () => {
+  fake.store.set('boss:token', { v: stored(400), exp: 0 }); fake.failSetToken = 99; kc.life = 5 // 5 秒で切れる（余裕 1 秒）
+  const m = await load()
+  await m.getValidBossAccessToken()
+  await sleep(4500)
+  await m.getValidBossAccessToken()
+  assert.equal(kc.calls, 2)
+  assert.match(kc.usedRefresh[1], /^rt-new-/, 'KV の古い更新用トークンで更新した')
+}, { timeoutMs: 20_000 })
+await t('保存し直す前に別のインスタンスが新しいトークンを保存していたら、上書きせずに持っていたものを捨てる', async () => {
+  fake.store.set('boss:token', { v: stored(400), exp: 0 }); fake.failSetToken = 99
+  const a = await load()
+  await a.getValidBossAccessToken() // a だけが新しいトークンを持つ
+  fake.failSetToken = 0
+  await sleep(1100)
+  const iat = nowSec(); const newer = { access_token: jwt(iat, iat + 300), refresh_token: 'rt-other-SECRET', expires_at: iat + 300 }
+  secrets.add('rt-other-SECRET')
+  fake.store.set('boss:token', { v: newer, exp: 0 }) // b が後から更新して保存した
+  assert.equal(await a.getValidBossAccessToken(), newer.access_token)
+  assert.equal(fake.token().refresh_token, 'rt-other-SECRET', '新しいトークンを上書きした')
+})
+await t('KV でスクリプト（eval）が使えなくても、読んで自分のロックなら消す', async () => {
+  fake.store.set('boss:token', { v: stored(400), exp: 0 }); fake.evalFails = true
+  const m = await load()
+  await m.getValidBossAccessToken()
+  assert.equal(fake.lock(), null, 'ロックが残っている')
+  fake.store.set('boss:token:refreshing', { v: 'someone-else', exp: Date.now() + 30_000 })
+  fake.store.set('boss:token', { v: stored(400), exp: 0 })
+  kc.mode = 'invalid_grant'
+  await settle((await load()).getValidBossAccessToken()) // ロックは取れない → 待つ側。相手のロックは消さない
+  assert.equal(fake.lock(), 'someone-else', '相手のロックを消した')
+}, { timeoutMs: 20_000 })
 
 // ---- 7. route の既存の動き（修正後の版だけ） ----
 if (IS_TARGET) {
