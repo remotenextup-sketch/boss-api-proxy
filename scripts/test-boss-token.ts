@@ -272,19 +272,59 @@ await t('保存し直す前に別のインスタンスが新しいトークン�
   assert.equal(await a.getValidBossAccessToken(), newer.access_token)
   assert.equal(fake.token().refresh_token, 'rt-other-SECRET', '新しいトークンを上書きした')
 })
-await t('KV でスクリプト（eval）が使えなくても、読んで自分のロックなら消す', async () => {
+// ---- 7. ロックの解除（確認と削除を 1 回で行う eval だけ。失敗しても GET → DEL はしない） ----
+await t('ロックの期限切れの後に別のプロセスが取り直したロックを、eval が使えなくても古い処理は消さない', async () => {
+  fake.store.set('boss:token', { v: stored(400), exp: 0 }); fake.evalFails = true
+  const [a, b] = [await load(), await load()]
+  await timing(a, { lockTtlSec: 1 }); await timing(b, { lockTtlSec: 1 })
+  kc.delayMs = 1500
+  const pa = settle(a.getValidBossAccessToken())
+  await sleep(1200) // a のロックが切れた
+  fake.store.set('boss:token', { v: stored(400), exp: 0 })
+  const pb = settle(b.getValidBossAccessToken()) // b が取り直して更新中
+  await sleep(600) // a が終わって解除しようとする
+  const lockWhileB = fake.lock()
+  await Promise.all([pa, pb])
+  assert.ok(lockWhileB && lockWhileB !== null, 'a が b のロックを消した')
+  assert.ok(!fake.lockOps.includes('del'), 'ロックのキーに DEL が走った')
+})
+await t('eval が失敗しても、ロックのキーには GET も DEL もしない（取る SET と eval だけ）', async () => {
   fake.store.set('boss:token', { v: stored(400), exp: 0 }); fake.evalFails = true
   const m = await load()
   await m.getValidBossAccessToken()
-  assert.equal(fake.lock(), null, 'ロックが残っている')
-  fake.store.set('boss:token:refreshing', { v: 'someone-else', exp: Date.now() + 30_000 })
-  fake.store.set('boss:token', { v: stored(400), exp: 0 })
-  kc.mode = 'invalid_grant'
-  await settle((await load()).getValidBossAccessToken()) // ロックは取れない → 待つ側。相手のロックは消さない
-  assert.equal(fake.lock(), 'someone-else', '相手のロックを消した')
-}, { timeoutMs: 20_000 })
+  assert.deepEqual(fake.lockOps, ['set', 'eval'])
+  assert.ok(fake.lock(), 'ロックが消えている（GET → DEL で外した？）')
+  assert.ok(logs.some((l) => /lock release failed/.test(l)), '解除の失敗が記録されていない')
+})
+await t('eval が失敗したロックは期限で自然に消え、その後は普通に更新できる', async () => {
+  fake.store.set('boss:token', { v: stored(400), exp: 0 }); fake.evalFails = true
+  const m = await load()
+  await timing(m, { lockTtlSec: 1 })
+  await m.getValidBossAccessToken()
+  assert.ok(fake.lock(), 'ロックがすぐ消えた')
+  await sleep(1100)
+  assert.equal(fake.lock(), null, '期限が過ぎてもロックが残っている')
+  fake.store.set('boss:token', { v: stored(400), exp: 0 }) // また更新が必要になった
+  const n = await load()
+  await timing(n, { lockTtlSec: 1 })
+  const r = await settle(n.getValidBossAccessToken())
+  assert.equal(r.ok, true)
+  assert.equal(kc.calls, 2)
+})
+await t('更新・保存の後にロックの解除だけが失敗しても、呼び出しは成功し、ほかの呼び出しも保存済みのトークンをすぐ使える', async () => {
+  fake.store.set('boss:token', { v: stored(400), exp: 0 }); fake.evalFails = true
+  const m = await load()
+  const a = await m.getValidBossAccessToken()
+  assert.equal(fake.token().access_token, a)
+  assert.ok(fake.lock(), '前提: ロックが残っている')
+  const t0 = Date.now()
+  const rs = await Promise.all([await load(), await load()].map((x) => settle(x.getValidBossAccessToken())))
+  assert.ok(rs.every((r) => r.ok && r.v === a), 'ほかの呼び出しが保存済みのトークンを使えなかった')
+  assert.ok(Date.now() - t0 < 1000, `ほかの呼び出しが ${Date.now() - t0}ms 待った`)
+  assert.equal(kc.calls, 1)
+})
 
-// ---- 7. route の既存の動き（修正後の版だけ） ----
+// ---- 8. route の既存の動き（修正後の版だけ） ----
 if (IS_TARGET) {
   const { NextRequest } = await import('next/server')
   const req = (p: string) => new NextRequest(`http://localhost/api/boss/${p}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'proxy-SECRET-key' }, body: JSON.stringify({ mallOrderNumber: '372877-20260425-0147424025' }) })
@@ -322,7 +362,7 @@ if (IS_TARGET) {
   })
 }
 
-// ---- 8. ログに秘密が出ていない ----
+// ---- 9. ログに秘密が出ていない ----
 await t('ログ全体に、トークン・更新用トークン・クライアントの秘密・BOSS の本文が出ていない', async () => {
   const all = logs.join('\n')
   const leaked = [...secrets].filter((s) => all.includes(s))

@@ -286,18 +286,13 @@ async function saveToken(newToken: BossToken): Promise<boolean> {
 // 自分のロックだけを外す（期限切れの後に別のプロセスが取ったロックは消さない）
 const RELEASE_LOCK_SCRIPT = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
 
+// 確認と削除を 1 回で行えるスクリプトでだけ外す。失敗しても GET → DEL では外さない
+//（その間に期限が切れて別のプロセスが取り直したロックを消してしまうため）。外せなければ期限（lockTtlSec）で消える。
+// 外せなかったことは呼び出しの結果に影響させない（更新・保存が済んでいればそのトークンを返す）
 async function releaseLock(lockId: string) {
   try {
     await kv.eval(RELEASE_LOCK_SCRIPT, [REFRESH_LOCK_KEY], [lockId]);
-    return;
   } catch {
-    // スクリプトが使えないときは、読んで自分のロックなら消す（読んでから消すまでの間に切れて取り直される、ごく短い隙はある）
-  }
-  try {
-    if ((await kv.get<string>(REFRESH_LOCK_KEY)) === lockId) {
-      await kv.del(REFRESH_LOCK_KEY);
-    }
-  } catch {
-    // 外せなくても期限（lockTtlSec）で消える
+    console.warn("⚠️ BOSS token lock release failed; it will expire by TTL");
   }
 }
