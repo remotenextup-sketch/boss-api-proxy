@@ -52,6 +52,71 @@ await t('数量・単価が文字列でも数として読む', () => {
   assert.equal(o.shipments[0].allZeroPrice, true)
 })
 
+// ── shippingRequestNo（RSL の出荷依頼番号の有力候補）。番号はすべて架空 ──
+const RSL_FORMAT = /^A[0-9]{11}$/
+await t('shippingRequestNo: 値をそのまま返す（A＋数字11桁の形式の値）', () => {
+  const o = normalizeOrderShipments({ shipments: [{ shipmentID: 1, shipmentStatus: '出荷中', shippingRequestNo: 'A00000000001', shipmentItems: [] }] }, 1)!
+  assert.equal(o.shipments[0].shippingRequestNo, 'A00000000001')
+  assert.ok(RSL_FORMAT.test(o.shipments[0].shippingRequestNo!))
+})
+await t('shippingRequestNo: 無い・null・空・空白だけは null（架空の値を作らない）', () => {
+  const o = normalizeOrderShipments({ shipments: [{ shipmentItems: [] }, { shippingRequestNo: null, shipmentItems: [] }, { shippingRequestNo: '', shipmentItems: [] }, { shippingRequestNo: '   ', shipmentItems: [] }, { shippingRequestNo: {}, shipmentItems: [] }] }, 1)!
+  assert.deepEqual(o.shipments.map((x) => x.shippingRequestNo), [null, null, null, null, null])
+})
+await t('shippingRequestNo: 形式に合わない値も書き換えず返す（前後の空白だけ除く。数は文字列に）。形式の判定は使う側', () => {
+  const o = normalizeOrderShipments({ shipments: [
+    { shippingRequestNo: ' A00000000002 ', shipmentItems: [] },
+    { shippingRequestNo: 'B00000000003', shipmentItems: [] },
+    { shippingRequestNo: 'A123', shipmentItems: [] },
+    { shippingRequestNo: 12345, shipmentItems: [] },
+    { shippingRequestNo: 'a00000000004', shipmentItems: [] },
+  ] }, 1)!
+  const v = o.shipments.map((x) => x.shippingRequestNo)
+  assert.deepEqual(v, ['A00000000002', 'B00000000003', 'A123', '12345', 'a00000000004'])
+  assert.deepEqual(v.map((x) => RSL_FORMAT.test(x ?? '')), [true, false, false, false, false])
+})
+await t('shippingRequestNo: 数は安全な整数だけ文字列にし、NaN・Infinity・範囲外・小数は null（桁が崩れた番号を返さない）', () => {
+  const o = normalizeOrderShipments({ shipments: [
+    { shipmentID: 31, shippingRequestNo: 0, shipmentItems: [] },
+    { shipmentID: 32, shippingRequestNo: Number.MAX_SAFE_INTEGER, shipmentItems: [] },
+    { shipmentID: 33, shippingRequestNo: -7, shipmentItems: [] },
+    { shipmentID: 34, shippingRequestNo: Number.NaN, shipmentItems: [] },
+    { shipmentID: 35, shippingRequestNo: Number.POSITIVE_INFINITY, shipmentItems: [] },
+    { shipmentID: 36, shippingRequestNo: Number.NEGATIVE_INFINITY, shipmentItems: [] },
+    { shipmentID: 37, shippingRequestNo: Number.MAX_SAFE_INTEGER + 2, shipmentItems: [] },
+    { shipmentID: 38, shippingRequestNo: 1e21, shipmentItems: [] },
+    { shipmentID: 39, shippingRequestNo: 12.5, shipmentItems: [] },
+    { shipmentID: 40, shippingRequestNo: true, shipmentItems: [] },
+    { shipmentID: 41, shippingRequestNo: ['A00000000041'], shipmentItems: [] },
+  ] }, 1)!
+  assert.deepEqual(o.shipments.map((x) => [x.shipmentId, x.shippingRequestNo]), [
+    ['31', '0'], ['32', '9007199254740991'], ['33', '-7'],
+    ['34', null], ['35', null], ['36', null], ['37', null], ['38', null], ['39', null], ['40', null], ['41', null],
+  ])
+  // 異常な値でも、ほかの出荷の番号・ID はずれない
+  assert.equal(o.shipments.length, 11)
+  assert.ok(!JSON.stringify(o).includes('NaN') && !JSON.stringify(o).includes('Infinity'))
+})
+await t('shippingRequestNo: 複数の出荷で、番号と出荷の状態・ID・0 円の印の対応が崩れない', () => {
+  const o = normalizeOrderShipments({ shipments: [
+    { shipmentID: 11, shipmentStatus: '出荷済', shippingRequestNo: 'A00000000011', shipmentItems: [{ skuCode: 'X', unitPrice: 1000, quantity: 1 }] },
+    { shipmentID: 12, shipmentStatus: '出荷中', shippingRequestNo: 'A00000000012', shipmentItems: [{ skuCode: 'X', unitPrice: 0, quantity: 1 }] },
+    { shipmentID: 13, shipmentStatus: '在庫引当中', shippingRequestNo: null, shipmentItems: [{ skuCode: 'P', unitPrice: 0, quantity: 1 }] },
+  ] }, 1)!
+  assert.deepEqual(o.shipments.map((x) => [x.index, x.shipmentId, x.shipmentStatus, x.shippingRequestNo, x.allZeroPrice]), [
+    [1, '11', '出荷済', 'A00000000011', false],
+    [2, '12', '出荷中', 'A00000000012', true],
+    [3, '13', '在庫引当中', null, true],
+  ])
+  assert.equal(new Set(o.shipments.map((x) => x.shippingRequestNo).filter(Boolean)).size, 2)
+})
+await t('shippingRequestNo: 名前だけの一覧（otherKeys）から外れ、ほかの知らない項目は今までどおり名前だけ', () => {
+  const o = normalizeOrderShipments({ shipments: [{ shippingRequestNo: 'A00000000021', shippingRequestedDateTime: '2026-11-18T10:00:00', warehouse: 'RSL', shipmentItems: [] }] }, 1)!
+  assert.deepEqual(o.shipments[0].otherKeys, ['shippingRequestedDateTime', 'warehouse'])
+  const json = JSON.stringify(o)
+  assert.ok(!json.includes('2026-11-18T10:00:00') && !json.includes('RSL'), 'ほかの知らない項目の値は今までどおり出さない')
+})
+
 // ── 取得の流れ（fetch はモック。送ったのは読み取りの 2 つだけか） ──
 const mockFetch = (search: unknown, detail: unknown, opts: { searchStatus?: number; detailStatus?: number } = {}) => {
   const calls: Array<{ url: string; method: string; body: string }> = []

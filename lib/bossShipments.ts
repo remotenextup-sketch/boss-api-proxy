@@ -25,6 +25,11 @@ export type BossShipment = {
   deliveryCompany: string | null
   deliveryNumber: string | null
   deliveryDate: string | null
+  /**
+   * BOSS の出荷の shippingRequestNo（RSL の「出荷依頼番号」の有力候補。同じものかは未確定）。
+   * 前後の空白を除いた値をそのまま返す（形式の判定・書き換えはしない）。空・空白だけ・無いとき・安全な整数でない数は null
+   */
+  shippingRequestNo: string | null
   /** 配送先は照合に使う郵便番号だけ（氏名・住所・電話は返さない） */
   consignee: { postalCode: string | null }
   items: BossShipmentItem[]
@@ -49,6 +54,7 @@ export const SHIPMENT_ID_KEYS = ['shipmentID', 'shipmentId', 'shipmentNo', 'ship
 
 const KNOWN_SHIPMENT_KEYS = new Set<string>([
   ...SHIPMENT_ID_KEYS, 'shipmentStatus', 'resultDeliveryCompany', 'resultDeliveryNumber', 'resultDeliveryDate', 'consignee', 'shipmentItems',
+  'shippingRequestNo',
 ])
 const KNOWN_ORDER_KEYS = new Set<string>([
   'orderId', 'orderID', 'id', 'mallOrderNumber', 'orderStatus', 'shipments',
@@ -58,6 +64,15 @@ const KNOWN_ORDER_KEYS = new Set<string>([
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : typeof v === 'number' ? String(v) : null)
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null)
+/**
+ * 出荷依頼番号の正規化。文字列は前後の空白を除いて返す（空・空白だけは null。形式が違っても書き換えない）。
+ * 数は安全な整数（Number.isSafeInteger）だけ文字列にする。NaN・Infinity・安全な範囲の外・小数は桁や値が崩れるので null
+ */
+const requestNo = (v: unknown): string | null => {
+  if (typeof v === 'string') { const t = v.trim(); return t ? t : null }
+  if (typeof v === 'number') return Number.isSafeInteger(v) ? String(v) : null
+  return null
+}
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 
 export function normalizeShipment(raw: unknown, index: number): BossShipment {
@@ -76,6 +91,7 @@ export function normalizeShipment(raw: unknown, index: number): BossShipment {
     deliveryCompany: str(s.resultDeliveryCompany),
     deliveryNumber: str(s.resultDeliveryNumber),
     deliveryDate: str(s.resultDeliveryDate),
+    shippingRequestNo: requestNo(s.shippingRequestNo),
     consignee: { postalCode: str(c.postalCode) },
     items,
     allZeroPrice: items.length > 0 && items.every((i) => i.unitPrice === 0),
