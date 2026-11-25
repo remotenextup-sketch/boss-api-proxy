@@ -65,6 +65,15 @@ await t('見つからない・複数・失敗・別の注文は届け先を返�
   assert.deepEqual(await fetchOrderConsignees(deps(fakeFetch(null, null, { searchStatus: 500 }).f), 'A-1'), { ok: false, reason: 'search_failed', status: 500 })
   assert.deepEqual(await fetchOrderConsignees(deps(fakeFetch([9], null, { listStatus: 429 }).f), 'A-1'), { ok: false, reason: 'detail_failed', status: 429 })
   assert.deepEqual(await fetchOrderConsignees(deps(fakeFetch([9], [detail]).f), 'OTHER-1'), { ok: false, reason: 'order_mismatch' })
+  // 注文番号が無い・空・数値・長い番号の先頭だけ一致、は返さない
+  const { mallOrderNumber: _drop, ...noNumber } = detail
+  for (const d of [noNumber, { ...detail, mallOrderNumber: '' }, { ...detail, mallOrderNumber: 372877 }]) {
+    assert.deepEqual(await fetchOrderConsignees(deps(fakeFetch([9], [d]).f), '372877-20260425-0147424025'), { ok: false, reason: 'order_mismatch' })
+  }
+  const long = 'A'.repeat(64)
+  assert.deepEqual(await fetchOrderConsignees(deps(fakeFetch([9], [{ ...detail, mallOrderNumber: long + 'B' }]).f), long), { ok: false, reason: 'order_mismatch' })
+  const ok1 = await fetchOrderConsignees(deps(fakeFetch([9], [{ ...detail, mallOrderNumber: ' 372877-20260425-0147424025 ' }]).f), '372877-20260425-0147424025')
+  assert.equal(ok1.ok, true)
 })
 
 // 入口: 鍵の分離と入力の確認（BOSS・KV へは行かない）

@@ -89,9 +89,11 @@ export async function fetchOrderConsignees(deps: { fetch: FetchLike; base: strin
   const detailRes = await deps.fetch(`${deps.base}/BOSS-API/v1/orders/list`, { method: 'POST', headers, body: JSON.stringify({ orders: [ids[0]] }) })
   if (!detailRes.ok) return { ok: false, reason: 'detail_failed', status: detailRes.status }
   const data = await detailRes.json()
-  const order = normalizeOrderConsignees(Array.isArray(data) ? data[0] : data)
+  const raw = Array.isArray(data) ? data[0] : data
+  const order = normalizeOrderConsignees(raw)
   if (!order) return { ok: false, reason: 'detail_empty' }
-  // 求めた注文と違う注文の届け先は返さない
-  if (order.mallOrderNumber !== null && order.mallOrderNumber !== mallOrderNumber) return { ok: false, reason: 'order_mismatch' }
-  return { ok: true, order }
+  // 求めた注文と完全に同じ注文番号のときだけ届け先を返す（番号が無い・空・違う・切り詰めると同じ、はどれも返さない）
+  const upstream = isObj(raw) && typeof raw.mallOrderNumber === 'string' ? raw.mallOrderNumber.trim() : null
+  if (upstream === null || upstream !== mallOrderNumber) return { ok: false, reason: 'order_mismatch' }
+  return { ok: true, order: { ...order, mallOrderNumber: upstream } }
 }
