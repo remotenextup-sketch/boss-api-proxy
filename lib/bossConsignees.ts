@@ -35,22 +35,26 @@ export type BossOrderConsignees = {
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
-/** 文字列は前後の空白を除く。空・空白だけ・文字列でないもの（数値の電話番号などは文字列にする）は null */
-const text = (v: unknown, max = 200): string | null => {
+/**
+ * 文字列は前後の空白を除く。空・空白だけ・文字列でないもの（数値の電話番号などは文字列にする）は null。
+ * 届け先は切り詰めない（短くした住所が正しい住所に見えないように。長さの確認は呼び出し側の入力の決まりで行う）。
+ * 1000 文字を超えるものは壊れた値とみなして null
+ */
+const text = (v: unknown): string | null => {
   const s = typeof v === 'string' ? v.trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : ''
-  return s ? s.slice(0, max) : null
+  return s && s.length <= 1000 ? s : null
 }
 const int = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) ? v : typeof v === 'string' && /^-?\d+$/.test(v.trim()) ? Number(v.trim()) : null)
 
 export function normalizeConsignee(raw: unknown): BossConsignee | null {
   if (!isObj(raw)) return null
   const c: BossConsignee = {
-    name: text(raw.name, 100),
-    postalCode: text(raw.postalCode, 20),
-    prefecture: text(raw.prefecture, 10),
-    city: text(raw.city, 100),
-    townAndStreet: text(raw.townAndStreet, 200),
-    phoneNumber: text(raw.phoneNumber, 30),
+    name: text(raw.name),
+    postalCode: text(raw.postalCode),
+    prefecture: text(raw.prefecture),
+    city: text(raw.city),
+    townAndStreet: text(raw.townAndStreet),
+    phoneNumber: text(raw.phoneNumber),
   }
   return Object.values(c).some((v) => v !== null) ? c : null
 }
@@ -60,7 +64,8 @@ export function normalizeOrderConsignees(detail: unknown): BossOrderConsignees |
   const shipments = (Array.isArray(detail.shipments) ? detail.shipments : []).map((raw, i): BossShipmentConsignee => {
     const s = isObj(raw) ? raw : {}
     const items = (Array.isArray(s.shipmentItems) ? s.shipmentItems : []).filter(isObj)
-    const names = [...new Set(items.map((it) => text(it.itemName, 60)).filter((n): n is string => !!n))].slice(0, 3)
+    // 商品名は出荷を見分ける手がかり（個人情報ではない）なので短くしてよい
+    const names = [...new Set(items.map((it) => text(it.itemName)?.slice(0, 60) ?? null).filter((n): n is string => !!n))].slice(0, 3)
     return {
       index: i + 1,
       shipmentStatus: int(s.shipmentStatus),
@@ -69,7 +74,7 @@ export function normalizeOrderConsignees(detail: unknown): BossOrderConsignees |
       consignee: normalizeConsignee(s.consignee),
     }
   })
-  return { mallOrderNumber: text(detail.mallOrderNumber, 64), shipments }
+  return { mallOrderNumber: text(detail.mallOrderNumber), shipments }
 }
 
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>

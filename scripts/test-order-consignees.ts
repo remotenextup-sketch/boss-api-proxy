@@ -43,6 +43,11 @@ await t('前後の空白は除き、数値の電話番号は文字列にする�
   assert.deepEqual(normalizeOrderConsignees({ shipments: 'x' })!.shipments, [])
 })
 
+await t('届け先は切り詰めない（長い住所はそのまま）・1000 文字を超える値は null', () => {
+  const r = normalizeOrderConsignees({ shipments: [{ consignee: { townAndStreet: 'あ'.repeat(250), name: 'い'.repeat(120), city: 'う'.repeat(1001) } }] })!
+  assert.deepEqual([r.shipments[0].consignee?.townAndStreet?.length, r.shipments[0].consignee?.name?.length, r.shipments[0].consignee?.city], [250, 120, null])
+})
+
 const fakeFetch = (search: unknown, list: unknown, opts: { searchStatus?: number; listStatus?: number } = {}) => {
   const calls: string[] = []
   const f: FetchLike = async (url) => {
