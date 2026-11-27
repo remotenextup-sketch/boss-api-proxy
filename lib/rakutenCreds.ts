@@ -94,7 +94,13 @@ export async function getRakutenCreds(): Promise<{ creds: Partial<RakutenCreds>;
     console.error("[rakutenCreds] kv read failed", (e as Error)?.name ?? "Error");
     throw new RakutenCredsError("kv_unavailable");
   }
-  if (stored === null || stored === undefined) return { creds: envCreds(), source: "env" };
+  // 「設定が無い」は KV が null をはっきり返したときだけ（Upstash はキーが無いと result:null）。
+  // undefined（応答に結果が無い・形が違う）は障害として扱い、環境変数に落とさない
+  if (stored === null) return { creds: envCreds(), source: "env" };
+  if (stored === undefined) {
+    console.error("[rakutenCreds] kv returned no result");
+    throw new RakutenCredsError("kv_unavailable");
+  }
   const c = open(stored, key);
   if (!c) {
     console.error("[rakutenCreds] kv value unreadable");
@@ -237,7 +243,8 @@ export async function rakutenCredsStatus(): Promise<CredsStatus> {
     console.error("[rakutenCreds] kv read failed", (e as Error)?.name ?? "Error");
     return { ok: true, configured: true, source: "unavailable", activeSavedAt: null, previous: null };
   }
-  const hasActive = active !== null && active !== undefined;
+  if (active === undefined) return { ok: true, configured: true, source: "unavailable", activeSavedAt: null, previous: null };
+  const hasActive = active !== null;
   const activeOk = hasActive && open(active, key) !== null;
   return {
     ok: true,
