@@ -210,7 +210,7 @@ export async function rakutenCredsStatus(): Promise<CredsStatus> {
 
 export type ChangeReason = TestReason | "not_configured" | "busy" | "current_missing" | "same_as_current" | "no_previous" | "save_failed";
 export type ChangeResult =
-  | { ok: true; expiryDate: string; daysLeft: number; serviceSecretChanged: boolean }
+  | { ok: true; expiryDate: string; daysLeft: number; licenseKeyChanged: boolean; serviceSecretChanged: boolean }
   | { ok: false; reason: ChangeReason; status?: number };
 
 const RELEASE_LOCK_SCRIPT = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
@@ -254,7 +254,7 @@ export async function activateRakutenCreds(input: CredsInput, doFetch: FetchLike
       console.error("[rakutenCreds] save failed", (e as Error)?.name ?? "Error");
       return { ok: false, reason: "save_failed" };
     }
-    return { ok: true, expiryDate: t.expiryDate, daysLeft: t.daysLeft, serviceSecretChanged: next.serviceSecret !== cur.serviceSecret };
+    return { ok: true, expiryDate: t.expiryDate, daysLeft: t.daysLeft, licenseKeyChanged: next.licenseKey !== cur.licenseKey, serviceSecretChanged: next.serviceSecret !== cur.serviceSecret };
   }) as Promise<ChangeResult>;
 }
 
@@ -275,6 +275,6 @@ export async function rollbackRakutenCreds(doFetch: FetchLike = fetch): Promise<
       console.error("[rakutenCreds] save failed", (e as Error)?.name ?? "Error");
       return { ok: false, reason: "save_failed" };
     }
-    return { ok: true, expiryDate: t.expiryDate, daysLeft: t.daysLeft, serviceSecretChanged: !!current.serviceSecret && prev.serviceSecret !== current.serviceSecret };
+    return { ok: true, expiryDate: t.expiryDate, daysLeft: t.daysLeft, licenseKeyChanged: prev.licenseKey !== current.licenseKey, serviceSecretChanged: prev.serviceSecret !== current.serviceSecret };
   }) as Promise<ChangeResult>;
 }

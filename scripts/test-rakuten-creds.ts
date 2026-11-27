@@ -154,7 +154,7 @@ await t('切替：同じ値は same_as_current（書かない）', async () => {
 await t('切替：ライセンスキーだけ替える。前の設定（環境変数の値）を残し、既存の口と期限の口が新しい値を使う', async () => {
   fake.reset()
   const a = await call(activatePOST, '/a', { method: 'POST', body: { licenseKey: NEW_LICENSE } })
-  assert.deepEqual(a.json, { ok: true, expiryDate: '2027-02-25', daysLeft: lib.daysLeftOf('2027-02-25'), serviceSecretChanged: false })
+  assert.deepEqual(a.json, { ok: true, expiryDate: '2027-02-25', daysLeft: lib.daysLeftOf('2027-02-25'), licenseKeyChanged: true, serviceSecretChanged: false })
   assert.deepEqual((await lib.getRakutenCreds()).creds, { serviceSecret: ENV_SECRET, licenseKey: NEW_LICENSE })
   const s = await call(statusGET, '/s')
   assert.equal(s.json.source, 'kv')
@@ -172,7 +172,7 @@ await t('切替：ライセンスキーだけ替える。前の設定（環境�
 
 await t('戻し：前の設定を試験してから入れ替える（もう一度戻すと元に戻る）', async () => {
   const r = await call(rollbackPOST, '/r', { method: 'POST' })
-  assert.equal(r.json.ok, true)
+  assert.deepEqual([r.json.ok, r.json.licenseKeyChanged, r.json.serviceSecretChanged], [true, true, false])
   assert.deepEqual((await lib.getRakutenCreds()).creds, { serviceSecret: ENV_SECRET, licenseKey: ENV_LICENSE })
   const r2 = await call(rollbackPOST, '/r', { method: 'POST' })
   assert.equal(r2.json.ok, true)
@@ -193,8 +193,19 @@ await t('serviceSecret も替える（明示して送ったときだけ）', asy
   fake.reset()
   const a = await call(activatePOST, '/a', { method: 'POST', body: { licenseKey: NEW_LICENSE, serviceSecret: NEW_SECRET } })
   assert.equal(a.json.ok, true)
-  assert.equal(a.json.serviceSecretChanged, true)
+  assert.deepEqual([a.json.licenseKeyChanged, a.json.serviceSecretChanged], [true, true])
   assert.deepEqual((await lib.getRakutenCreds()).creds, { serviceSecret: NEW_SECRET, licenseKey: NEW_LICENSE })
+  // 戻すと両方が環境変数の値に戻る（戻しの結果も変わった項目を返す）
+  const r = await call(rollbackPOST, '/r', { method: 'POST' })
+  assert.deepEqual([r.json.ok, r.json.licenseKeyChanged, r.json.serviceSecretChanged], [true, true, true])
+  assert.deepEqual((await lib.getRakutenCreds()).creds, { serviceSecret: ENV_SECRET, licenseKey: ENV_LICENSE })
+  // serviceSecret だけを替える（ライセンスキーは今のまま）→ licenseKeyChanged は false
+  const b = await call(activatePOST, '/a', { method: 'POST', body: { licenseKey: ENV_LICENSE, serviceSecret: NEW_SECRET } })
+  assert.equal(b.json.reason ?? null, 'rms_unauthorized', 'この組み合わせは偽の RMS で無効（何も書かない）')
+  VALID.add(`${NEW_SECRET}:${ENV_LICENSE}`)
+  const c = await call(activatePOST, '/a', { method: 'POST', body: { licenseKey: ENV_LICENSE, serviceSecret: NEW_SECRET } })
+  assert.deepEqual([c.json.ok, c.json.licenseKeyChanged, c.json.serviceSecretChanged], [true, false, true])
+  VALID.delete(`${NEW_SECRET}:${ENV_LICENSE}`)
 })
 
 await t('同時の切替は 1 つだけ（ほかは busy 409）', async () => {
