@@ -21,9 +21,11 @@ export async function GET(req: NextRequest) {
     const state = searchParams.get("state");
 
     if (!code) {
+      // BOSS の画面で拒否したとき（error が付いて code が無い）は「許可されませんでした」の画面。JSON は今までどおり
       return respond(req, 
         { ok: false, message: "no code" },
-        { status: 400 }
+        { status: 400 },
+        searchParams.get("error") ? "denied" : undefined
       );
     }
 

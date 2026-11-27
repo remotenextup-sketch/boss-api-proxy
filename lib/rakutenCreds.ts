@@ -2,8 +2,11 @@
 //
 // 読み出し（6 本の楽天の口が使う）:
 //   RAKUTEN_CREDS_ENC_KEY（32 バイトを base64）が設定され、KV に「今の設定」があれば、それを復号して使う。
-//   それ以外（鍵が無い・KV に無い・KV が読めない・復号できない）は、今までどおり環境変数
-//   RAKUTEN_SERVICE_SECRET / RAKUTEN_LICENSE_KEY を使う。→ この鍵を設定するまでは動きが今と全く同じ
+//   鍵が無い・KV に設定が無いときは、今までどおり環境変数 RAKUTEN_SERVICE_SECRET / RAKUTEN_LICENSE_KEY を使う
+//   （→ この鍵を設定するまで・画面で切り替えるまでは、動きが今と全く同じ）。
+//   鍵があるのに KV が読めない・KV の設定を復号できないときは、環境変数の古いキーに黙って落とさず、
+//   決まったエラー（RakutenCredsError）にする。切り替えた後は環境変数のキーが失効していることが多く、
+//   古いキーで呼ぶと「認証エラー」に見えて原因が分かりにくくなるため。ログには理由の名前だけを出す
 //
 // 差し替え（cs-platform の管理画面から。x-api-key は BOSS_CREDENTIALS_API_KEY）:
 //   試験   … 送られた値で、ライセンスキーの期限の取得（読み取りだけ）を 1 回呼ぶ。保存しない
@@ -52,8 +55,10 @@ function open(stored: unknown, key: Buffer): RakutenCreds | null {
   const s = stored as Partial<Stored> | null;
   if (!s || s.v !== 1 || typeof s.iv !== "string" || typeof s.tag !== "string" || typeof s.data !== "string") return null;
   try {
-    const d = createDecipheriv("aes-256-gcm", key, Buffer.from(s.iv, "base64"));
-    d.setAuthTag(Buffer.from(s.tag, "base64"));
+    const tag = Buffer.from(s.tag, "base64");
+    if (tag.length !== 16) return null;
+    const d = createDecipheriv("aes-256-gcm", key, Buffer.from(s.iv, "base64"), { authTagLength: 16 });
+    d.setAuthTag(tag);
     const j = JSON.parse(Buffer.concat([d.update(Buffer.from(s.data, "base64")), d.final()]).toString("utf8"));
     return typeof j?.s === "string" && typeof j?.l === "string" && j.s && j.l ? { serviceSecret: j.s, licenseKey: j.l } : null;
   } catch {
@@ -66,19 +71,36 @@ function envCreds(): Partial<RakutenCreds> {
 }
 
 // ---- 読み出し ----
-/** 今使う認証情報と、その出どころ。値が無ければ undefined の項目を返す（呼び出し側で今までどおりのエラーにする） */
+/** 画面で切り替えた設定が KV にあるのに使えないとき。message は決まった語だけ（値は含まない） */
+export class RakutenCredsError extends Error {
+  constructor(public code: "kv_unavailable" | "kv_unreadable") {
+    super(`RAKUTEN_CREDS_UNAVAILABLE (${code})`);
+    this.name = "RakutenCredsError";
+  }
+}
+
+/**
+ * 今使う認証情報と、その出どころ。
+ *   暗号化の鍵が無い・KV に設定が無い → 環境変数（値が無ければ undefined の項目。呼び出し側で今までどおりのエラーにする）
+ *   KV が読めない・KV の設定を復号できない → RakutenCredsError（環境変数には落とさない）
+ */
 export async function getRakutenCreds(): Promise<{ creds: Partial<RakutenCreds>; source: CredsSource }> {
   const key = encKey();
-  if (key) {
-    try {
-      const c = open(await kv.get(RAKUTEN_CREDS_ACTIVE_KEY), key);
-      if (c) return { creds: c, source: "kv" };
-    } catch (e) {
-      // KV が読めないときは環境変数で続ける（今と同じ動き）。理由の名前だけ
-      console.error("[rakutenCreds] kv read failed; using env", (e as Error)?.name ?? "Error");
-    }
+  if (!key) return { creds: envCreds(), source: "env" };
+  let stored: unknown;
+  try {
+    stored = await kv.get(RAKUTEN_CREDS_ACTIVE_KEY);
+  } catch (e) {
+    console.error("[rakutenCreds] kv read failed", (e as Error)?.name ?? "Error");
+    throw new RakutenCredsError("kv_unavailable");
   }
-  return { creds: envCreds(), source: "env" };
+  if (stored === null || stored === undefined) return { creds: envCreds(), source: "env" };
+  const c = open(stored, key);
+  if (!c) {
+    console.error("[rakutenCreds] kv value unreadable");
+    throw new RakutenCredsError("kv_unreadable");
+  }
+  return { creds: c, source: "kv" };
 }
 
 export function esaHeader(c: RakutenCreds): string {
@@ -93,9 +115,15 @@ export async function rakutenEsaHeader(): Promise<string> {
   return esaHeader(creds as RakutenCreds);
 }
 
-/** items/prices 用（無ければ null） */
+/** items/prices 用（無ければ null。KV の設定が使えないときも null にして、価格の口は 503 rms_not_configured を返す） */
 export async function rakutenEsaHeaderOrNull(): Promise<string | null> {
-  const { creds } = await getRakutenCreds();
+  let creds: Partial<RakutenCreds>;
+  try {
+    ({ creds } = await getRakutenCreds());
+  } catch (e) {
+    if (e instanceof RakutenCredsError) return null;
+    throw e;
+  }
   return creds.serviceSecret && creds.licenseKey ? esaHeader(creds as RakutenCreds) : null;
 }
 
@@ -129,23 +157,28 @@ export function daysLeftOf(expiryDate: string, nowMs = Date.now()): number {
   return Math.floor((expiry.getTime() - nowMs) / 86_400_000);
 }
 
-export type TestReason = "rms_unauthorized" | "rms_forbidden" | "rms_http_error" | "rms_unreachable" | "invalid_response" | "expiry_not_found";
+export type TestReason = "rms_unauthorized" | "rms_forbidden" | "rms_http_error" | "rms_unreachable" | "rms_timeout" | "invalid_response" | "expiry_not_found";
+
+/** 試験 1 回の制限時間。切替のロック（30 秒）と CS 側の待ち時間（20 秒）より短くする */
+export const RMS_TEST_TIMEOUT_MS = 10_000;
 export type TestResult = { ok: true; expiryDate: string; daysLeft: number } | { ok: false; reason: TestReason; status?: number };
 
 /**
  * 渡された認証情報で、ライセンスキーの期限の取得（RMS の読み取りだけの API）を 1 回呼ぶ。
  * 結果は期限と残り日数、または決まった理由と HTTP の番号だけ（RMS の応答本文は返さない）。
  */
-export async function testRakutenCreds(c: RakutenCreds, doFetch: FetchLike = fetch): Promise<TestResult> {
+export async function testRakutenCreds(c: RakutenCreds, doFetch: FetchLike = fetch, timeoutMs = RMS_TEST_TIMEOUT_MS): Promise<TestResult> {
   let res: Response;
   try {
     res = await doFetch(`${RMS_LICENSE_EXPIRY}?licenseKey=${encodeURIComponent(c.licenseKey)}`, {
       method: "GET",
       headers: { Authorization: esaHeader(c), Accept: "application/json" },
       cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch {
-    return { ok: false, reason: "rms_unreachable" };
+  } catch (e) {
+    const name = (e as Error)?.name;
+    return { ok: false, reason: name === "TimeoutError" || name === "AbortError" ? "rms_timeout" : "rms_unreachable" };
   }
   if (res.status !== 200) {
     await res.text().catch(() => "");
@@ -183,7 +216,7 @@ export function parseCredsInput(body: unknown): CredsInput | null {
 export type CredsStatus = {
   ok: true;
   configured: boolean; // 画面からの差し替えが使えるか（暗号化の鍵があるか）
-  source: CredsSource; // 今使っている出どころ
+  source: CredsSource | "unavailable"; // 今使っている出どころ（unavailable = KV の設定があるのに読めない・KV が止まっている）
   activeSavedAt: string | null;
   previous: { savedAt: string | null; origin: CredsSource | null } | null;
 };
@@ -197,27 +230,39 @@ function meta(stored: unknown): { savedAt: string | null; origin: CredsSource | 
 export async function rakutenCredsStatus(): Promise<CredsStatus> {
   const key = encKey();
   if (!key) return { ok: true, configured: false, source: "env", activeSavedAt: null, previous: null };
-  const [active, previous] = await Promise.all([kv.get(RAKUTEN_CREDS_ACTIVE_KEY), kv.get(RAKUTEN_CREDS_PREVIOUS_KEY)]);
-  const activeOk = open(active, key) !== null;
+  let active: unknown, previous: unknown;
+  try {
+    [active, previous] = await Promise.all([kv.get(RAKUTEN_CREDS_ACTIVE_KEY), kv.get(RAKUTEN_CREDS_PREVIOUS_KEY)]);
+  } catch (e) {
+    console.error("[rakutenCreds] kv read failed", (e as Error)?.name ?? "Error");
+    return { ok: true, configured: true, source: "unavailable", activeSavedAt: null, previous: null };
+  }
+  const hasActive = active !== null && active !== undefined;
+  const activeOk = hasActive && open(active, key) !== null;
   return {
     ok: true,
     configured: true,
-    source: activeOk ? "kv" : "env",
+    source: !hasActive ? "env" : activeOk ? "kv" : "unavailable",
     activeSavedAt: activeOk ? meta(active)?.savedAt ?? null : null,
     previous: open(previous, key) ? meta(previous) : null,
   };
 }
 
-export type ChangeReason = TestReason | "not_configured" | "busy" | "current_missing" | "same_as_current" | "no_previous" | "save_failed";
+export type ChangeReason = TestReason | "not_configured" | "busy" | "current_missing" | "same_as_current" | "no_previous" | "save_failed" | "creds_unavailable";
 export type ChangeResult =
   | { ok: true; expiryDate: string; daysLeft: number; licenseKeyChanged: boolean; serviceSecretChanged: boolean }
   | { ok: false; reason: ChangeReason; status?: number };
 
 const RELEASE_LOCK_SCRIPT = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
 
-async function withLock<T>(fn: () => Promise<T>): Promise<T | { ok: false; reason: "busy" }> {
+async function withLock<T>(fn: () => Promise<T>): Promise<T | { ok: false; reason: "busy" | "creds_unavailable" }> {
   const id = randomUUID();
-  const got = await kv.set(RAKUTEN_CREDS_LOCK_KEY, id, { nx: true, ex: LOCK_TTL_SEC });
+  let got: unknown;
+  try {
+    got = await kv.set(RAKUTEN_CREDS_LOCK_KEY, id, { nx: true, ex: LOCK_TTL_SEC });
+  } catch {
+    return { ok: false, reason: "creds_unavailable" };
+  }
   if (!got) return { ok: false, reason: "busy" };
   try {
     return await fn();
@@ -227,6 +272,16 @@ async function withLock<T>(fn: () => Promise<T>): Promise<T | { ok: false; reaso
     } catch {
       console.warn("[rakutenCreds] lock release failed; it will expire by TTL");
     }
+  }
+}
+
+/** 今の設定（KV の設定が使えなければ null） */
+async function currentOrNull(): Promise<{ creds: Partial<RakutenCreds>; source: CredsSource } | null> {
+  try {
+    return await getRakutenCreds();
+  } catch (e) {
+    if (e instanceof RakutenCredsError) return null;
+    throw e;
   }
 }
 
@@ -240,7 +295,10 @@ export async function activateRakutenCreds(input: CredsInput, doFetch: FetchLike
   const key = encKey();
   if (!key) return { ok: false, reason: "not_configured" };
   return withLock(async (): Promise<ChangeResult> => {
-    const { creds: current, source } = await getRakutenCreds();
+    // KV が読めない・今の設定を復号できないときは切り替えない（前の設定を環境変数の値で上書きしない）
+    const now = await currentOrNull();
+    if (!now) return { ok: false, reason: "creds_unavailable" };
+    const { creds: current, source } = now;
     if (!current.serviceSecret || !current.licenseKey) return { ok: false, reason: "current_missing" };
     const cur = current as RakutenCreds;
     const next: RakutenCreds = { licenseKey: input.licenseKey, serviceSecret: input.serviceSecret ?? cur.serviceSecret };
@@ -263,9 +321,17 @@ export async function rollbackRakutenCreds(doFetch: FetchLike = fetch): Promise<
   const key = encKey();
   if (!key) return { ok: false, reason: "not_configured" };
   return withLock(async (): Promise<ChangeResult> => {
-    const prev = open(await kv.get(RAKUTEN_CREDS_PREVIOUS_KEY), key);
+    let prevStored: unknown;
+    try {
+      prevStored = await kv.get(RAKUTEN_CREDS_PREVIOUS_KEY);
+    } catch {
+      return { ok: false, reason: "creds_unavailable" };
+    }
+    const prev = open(prevStored, key);
     if (!prev) return { ok: false, reason: "no_previous" };
-    const { creds: current, source } = await getRakutenCreds();
+    const now = await currentOrNull();
+    if (!now) return { ok: false, reason: "creds_unavailable" };
+    const { creds: current, source } = now;
     const t = await testRakutenCreds(prev, doFetch);
     if (!t.ok) return t;
     try {

@@ -228,21 +228,62 @@ await t('保存の途中の失敗：「前の設定」を書けなければ今�
   assert.equal((await lib.getRakutenCreds()).source, 'env')
 })
 
-await t('KV が読めない・暗号文が壊れている・鍵が違うときは環境変数で続ける（既存の口を止めない）', async () => {
+await t('KV の設定があるのに使えない（KV が止まっている・暗号文が壊れている・鍵が違う・タグの長さが違う）ときは、環境変数の古いキーに落とさず決まったエラー', async () => {
   fake.reset()
   await call(activatePOST, '/a', { method: 'POST', body: { licenseKey: NEW_LICENSE } })
+  const fails = async () => { try { await lib.getRakutenCreds(); return null } catch (e) { return (e as Error).message } }
   fake.down = true
-  assert.deepEqual((await lib.getRakutenCreds()).source, 'env')
+  assert.equal(await fails(), 'RAKUTEN_CREDS_UNAVAILABLE (kv_unavailable)')
+  // 既存の口: 環境変数の古いキーで RMS を呼ばない
+  const before = calls.length
+  const { NextRequest } = await import('next/server')
+  const res = await listGET(new NextRequest('https://proxy.test/api/boss/inquiry/list?fromDate=2026-11-01&toDate=2026-11-02', { headers: { 'x-api-key': PROXY_KEY } }))
+  assert.equal(res.status, 500)
+  assert.equal((await res.json()).reason, 'RAKUTEN_CREDS_UNAVAILABLE (kv_unavailable)')
+  const e = await call(expiryGET, '/e', { key: PROXY_KEY })
+  assert.deepEqual([e.status, e.json.reason], [503, 'creds_unavailable'])
+  assert.equal(calls.length, before, 'RMS を呼ばない')
+  const st = await call(statusGET, '/s')
+  assert.equal(st.json.source, 'unavailable')
+  // 切替・戻し・試験も止まる（前の設定を環境変数の値で上書きしない）
+  const prevBefore = JSON.stringify(fake.store.get(lib.RAKUTEN_CREDS_PREVIOUS_KEY))
+  assert.equal((await call(activatePOST, '/a', { method: 'POST', body: { licenseKey: NEW_LICENSE, serviceSecret: NEW_SECRET } })).json.reason, 'creds_unavailable')
+  assert.equal((await call(rollbackPOST, '/r', { method: 'POST' })).json.reason, 'creds_unavailable')
+  assert.equal((await call(testPOST, '/t', { method: 'POST', body: { licenseKey: NEW_LICENSE } })).json.reason, 'creds_unavailable')
   fake.down = false
+  assert.equal(JSON.stringify(fake.store.get(lib.RAKUTEN_CREDS_PREVIOUS_KEY)), prevBefore)
+  // 鍵が違う
   process.env.RAKUTEN_CREDS_ENC_KEY = randomBytes(32).toString('base64')
-  assert.deepEqual((await lib.getRakutenCreds()).source, 'env')
+  assert.equal(await fails(), 'RAKUTEN_CREDS_UNAVAILABLE (kv_unreadable)')
+  assert.equal((await call(statusGET, '/s')).json.source, 'unavailable')
   process.env.RAKUTEN_CREDS_ENC_KEY = ENC_KEY
   assert.deepEqual((await lib.getRakutenCreds()).source, 'kv')
+  // 暗号文が壊れている・タグの長さが違う
+  const good = fake.store.get(lib.RAKUTEN_CREDS_ACTIVE_KEY)
+  for (const bad of [{ ...good.v, data: 'AAAA' }, { ...good.v, tag: Buffer.alloc(8).toString('base64') }, { v: 9 }]) {
+    fake.store.set(lib.RAKUTEN_CREDS_ACTIVE_KEY, { v: bad, exp: 0 })
+    assert.equal(await fails(), 'RAKUTEN_CREDS_UNAVAILABLE (kv_unreadable)')
+  }
+  fake.store.set(lib.RAKUTEN_CREDS_ACTIVE_KEY, good)
+  // KV に設定が無ければ今までどおり環境変数
+  fake.reset()
+  assert.deepEqual((await lib.getRakutenCreds()).source, 'env')
+})
+
+await t('試験の時間制限: RMS が応答しなければ rms_timeout（制限は切替のロック 30 秒・CS の 20 秒より短い）', async () => {
+  assert.ok(lib.RMS_TEST_TIMEOUT_MS < 20_000)
+  const hang = (async (_u: string, init?: RequestInit) => new Promise<Response>((_, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' })))
+  })) as never
+  const keepAlive = setInterval(() => {}, 20) // AbortSignal.timeout のタイマーはプロセスを保たないため
+  const r = await lib.testRakutenCreds({ licenseKey: NEW_LICENSE, serviceSecret: ENV_SECRET }, hang, 50)
+  clearInterval(keepAlive)
+  assert.deepEqual(r, { ok: false, reason: 'rms_timeout' })
 })
 
 // ---- BOSS の認証の確認（トークンの取得だけ。業務 API は呼ばない） ----
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url')
-const ACCESS = `${b64({ alg: 'none' })}.${b64({ iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 300 })}.TEST-ONLY-sig-access`
+const ACCESS = `${b64({ alg: 'none' })}.${b64({ iat: Math.floor(Date.now() / 1000), auth_time: 1_800_000_000, exp: Math.floor(Date.now() / 1000) + 300 })}.TEST-ONLY-sig-access`
 const REFRESH = `${b64({ alg: 'none' })}.${b64({ exp: 1_900_000_000 })}.TEST-ONLY-sig-refresh`
 SECRETS.push(ACCESS, REFRESH, 'TEST-ONLY-sig-access', 'TEST-ONLY-sig-refresh')
 
@@ -254,6 +295,7 @@ await t('BOSS：保存済みのトークンが有効なら外へ出ずに期限�
   assert.equal(r.json.ok, true)
   assert.equal(r.json.refreshExpiresAt, 1_900_000_000)
   assert.ok(typeof r.json.accessExpiresAt === 'number')
+  assert.deepEqual([typeof r.json.issuedAt, r.json.authTime], ['number', 1_800_000_000], '発行時刻とログインの時刻（auth_time）だけ')
   assert.equal(calls.length, before, 'BOSS へも RMS へも接続しない')
 })
 

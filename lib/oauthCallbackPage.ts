@@ -7,6 +7,7 @@ export type CallbackBody = { ok: boolean; [k: string]: unknown };
 
 const PAGES = {
   ok: { title: "BOSS の認証が完了しました", body: "この画面を閉じて、CS の画面（API 認証情報の更新 → BOSS）で「接続テスト」を押してください。" },
+  denied: { title: "BOSS で許可されませんでした", body: "BOSS の画面で許可されなかったため、認証は更新していません（今の設定のまま）。必要なら CS の画面の「再認証を始める」からやり直してください。" },
   retry: { title: "認証を確認できませんでした", body: "時間切れ（10 分）か、別の画面から始めた可能性があります。CS の画面の「再認証を始める」からやり直してください。" },
   failed: { title: "認証を完了できませんでした", body: "BOSS とのやり取りに失敗しました。時間をおいて、CS の画面の「再認証を始める」からやり直してください。続くときは開発者に連絡してください。" },
 } as const;
@@ -25,10 +26,10 @@ export function callbackPage(kind: keyof typeof PAGES): string {
 }
 
 /** JSON の呼び出しには今までどおりの JSON、ブラウザには画面を返す。状態の番号は同じ */
-export function respond(req: Request, body: CallbackBody, init?: { status?: number }): NextResponse {
+export function respond(req: Request, body: CallbackBody, init?: { status?: number }, page?: keyof typeof PAGES): NextResponse {
   const status = init?.status ?? 200;
   const headers = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" };
   if (wantsJson(req)) return NextResponse.json(body, { status, headers });
-  const kind = body.ok ? "ok" : status === 400 ? "retry" : "failed";
+  const kind = page ?? (body.ok ? "ok" : status === 400 ? "retry" : "failed");
   return new NextResponse(callbackPage(kind), { status, headers: { ...headers, "Content-Type": "text/html; charset=utf-8" } });
 }

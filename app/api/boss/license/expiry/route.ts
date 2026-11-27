@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireProxyApiKey } from "@/lib/proxyAuth";
-import { getRakutenCreds, rakutenEsaHeader } from "@/lib/rakutenCreds";
+import { getRakutenCreds, RakutenCredsError, rakutenEsaHeader } from "@/lib/rakutenCreds";
 
 // ライセンスキーの有効期限を取得する（LicenseManagementAPI: license.expiryDate.get）。
 // 問い合わせ管理APIを使うとライセンスキーの有効期限は90日で、
@@ -60,7 +60,14 @@ export async function GET(req: NextRequest) {
   if (denied) return denied;
 
   const configured = process.env.RAKUTEN_EP_LICENSE_EXPIRY?.trim();
-  const candidates = configured ? [configured] : await candidateUrls();
+  let candidates: string[];
+  try {
+    candidates = configured ? [configured] : await candidateUrls();
+  } catch (e) {
+    // 画面で切り替えた設定が KV にあるのに使えない（KV が止まっている・復号できない）。環境変数の古いキーでは確かめない
+    if (e instanceof RakutenCredsError) return NextResponse.json({ ok: false, reason: "creds_unavailable" }, { status: 503 });
+    throw e;
+  }
   const tried: Array<{ url: string; status: number | string; detail?: string }> = [];
 
   let res: Response | null = null;

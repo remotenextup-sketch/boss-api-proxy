@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { requireCredentialsApiKey } from "@/lib/credentialsAuth";
-import { getRakutenCreds, parseCredsInput, testRakutenCreds } from "@/lib/rakutenCreds";
+import { getRakutenCreds, parseCredsInput, RakutenCredsError, testRakutenCreds } from "@/lib/rakutenCreds";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -25,7 +25,12 @@ export async function POST(req: Request) {
   try {
     let serviceSecret = input.serviceSecret;
     if (!serviceSecret) {
-      serviceSecret = (await getRakutenCreds()).creds.serviceSecret;
+      try {
+        serviceSecret = (await getRakutenCreds()).creds.serviceSecret;
+      } catch (e) {
+        if (e instanceof RakutenCredsError) return NextResponse.json({ ok: false, reason: "creds_unavailable" }, { headers: NO_STORE });
+        throw e;
+      }
       if (!serviceSecret) return NextResponse.json({ ok: false, reason: "current_missing" }, { headers: NO_STORE });
     }
     const r = await testRakutenCreds({ licenseKey: input.licenseKey, serviceSecret });

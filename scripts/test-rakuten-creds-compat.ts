@@ -34,6 +34,7 @@ delete process.env.RAKUTEN_EP_LICENSE_EXPIRY
 for (const level of ['log', 'info', 'warn', 'error'] as const) console[level] = () => {}
 const say = (s: string) => process.stdout.write(s + '\n')
 let ok = 0
+let changed = 0
 
 // ---- 偽の楽天 RMS（呼ばれた内容を記録する） ----
 type Sent = { url: string; method: string; auth: string | null; body: string | null }
@@ -94,7 +95,6 @@ async function main() {
     const scenarios: [string, () => void][] = [
       ['暗号化の鍵が無い', () => { delete process.env.RAKUTEN_CREDS_ENC_KEY; fake.reset() }],
       ['鍵はあるが KV に設定が無い', () => { process.env.RAKUTEN_CREDS_ENC_KEY = randomBytes(32).toString('base64'); fake.reset() }],
-      ['鍵はあるが KV が読めない', () => { process.env.RAKUTEN_CREDS_ENC_KEY = randomBytes(32).toString('base64'); fake.reset(); fake.down = true }],
     ]
     const envs: [string, () => void][] = [
       ['環境変数あり', () => { process.env.RAKUTEN_SERVICE_SECRET = FAKE_SECRET; process.env.RAKUTEN_LICENSE_KEY = FAKE_LICENSE }],
@@ -122,10 +122,24 @@ async function main() {
       }
       say(`OK ${sName}: 6 本の口 × 環境変数 4 通りで、変更前と同じ（送る内容・応答）`)
     }
+    // 鍵はあるが KV が読めないとき: 変更前と違い、環境変数の古いキーで RMS を呼ばずに止める（意図した変更）
+    for (const [eName, setE] of envs) {
+      for (const name of Object.keys(ROUTES) as (keyof typeof ROUTES)[]) {
+        const method = name === 'reply' || name === 'upload' ? 'POST' : 'GET'
+        process.env.RAKUTEN_CREDS_ENC_KEY = randomBytes(32).toString('base64'); fake.reset(); fake.down = true; setE()
+        const after = await run(current[name][method]!, name)
+        fake.down = false
+        assert.equal(after.sent.length, 0, `${eName}・${name}: KV が読めないときは RMS を呼ばない`)
+        assert.ok(after.status >= 500, `${eName}・${name}: 失敗を返す（${after.status}）`)
+        assert.ok(!after.body.includes(FAKE_SECRET) && !after.body.includes(FAKE_LICENSE))
+        changed++
+      }
+    }
+    say(`OK 鍵はあるが KV が読めない: 6 本の口 × 環境変数 4 通りで、RMS を呼ばずに失敗を返す（意図した変更）`)
   } finally {
     rmSync(LEGACY, { recursive: true, force: true })
   }
-  say(`\n${ok} 件 OK（同じ）`)
+  say(`\n${ok} 件 OK（変更前と同じ）＋ ${changed} 件 OK（KV が読めないときは止める・意図した変更）`)
 }
 
 main().catch((e) => { rmSync(LEGACY, { recursive: true, force: true }); process.stderr.write(`NG ${(e as Error).message.slice(0, 400)}\n`); process.exit(1) })

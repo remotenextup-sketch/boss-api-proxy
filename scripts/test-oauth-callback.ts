@@ -59,6 +59,15 @@ await t('ブラウザ・state が無い・違う・使い済み: やり直しの
   assert.deepEqual([again.status, again.text.includes('認証を確認できませんでした')], [400, true], '同じ state は 2 回使えない')
 })
 
+await t('ブラウザ・BOSS の画面で拒否（error 付き・code なし）: 「許可されませんでした」の画面（JSON は今までどおり no code）', async () => {
+  await issue()
+  const r = await call(`error=access_denied&state=${STATE}`)
+  texts.push(r.text)
+  assert.deepEqual([r.status, r.text.includes('BOSS で許可されませんでした')], [400, true])
+  const j = await call(`error=access_denied&state=${STATE}`, 'application/json')
+  assert.deepEqual([j.status, JSON.parse(j.text)], [400, { ok: false, message: 'no code' }])
+})
+
 await t('ブラウザ・BOSS との交換に失敗・例外: 決まった文だけ（BOSS の応答・例外の中身は出さない）', async () => {
   await issue()
   tokenStatus = 400

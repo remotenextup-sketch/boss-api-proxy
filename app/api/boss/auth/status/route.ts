@@ -1,7 +1,9 @@
 // BOSS の認証の確認（管理画面の接続テスト）。アクセストークンを 1 回取るだけ（期限内なら使い回し、切れていれば更新する）。
 // 注文・出荷などの業務 API は呼ばない。トークンの値は返さず、期限（epoch 秒）だけを返す。
 //   GET /api/boss/auth/status   x-api-key: BOSS_CREDENTIALS_API_KEY
-//   → { ok:true, accessExpiresAt, refreshExpiresAt } / { ok:false, reason }（reason は reauth_required など決まった語）
+//   → { ok:true, accessExpiresAt, refreshExpiresAt, issuedAt, authTime } / { ok:false, reason }（reason は reauth_required など決まった語）
+//   issuedAt = 保存済みのアクセストークンの発行時刻（iat）、authTime = 人が BOSS でログイン・許可した時刻（auth_time。更新では変わらない）。
+//   CS は authTime（無ければ判定できない）を「再認証を始めた時刻」と比べて、新しい認証で保存済みかを出す
 // 更新は lib/bossToken.ts の 1 か所だけで行う（ロック・回転する更新用トークンの保存も同じ処理）
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +12,7 @@ import { NextResponse } from "next/server";
 import { kv } from "@vercel/kv";
 import { requireCredentialsApiKey } from "@/lib/credentialsAuth";
 import { BossTokenError, getValidBossAccessToken } from "@/lib/bossToken";
-import { jwtExp } from "@/lib/jwtExp";
+import { jwtExp, jwtTimes } from "@/lib/jwtExp";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -19,12 +21,15 @@ export async function GET(req: Request) {
   if (denied) return denied;
   try {
     const access = await getValidBossAccessToken();
-    const stored = await kv.get<{ refresh_token?: unknown; expires_at?: unknown }>("boss:token").catch(() => null);
+    const stored = await kv.get<{ access_token?: unknown; refresh_token?: unknown; expires_at?: unknown }>("boss:token").catch(() => null);
+    const times = jwtTimes(stored?.access_token ?? access);
     return NextResponse.json(
       {
         ok: true,
         accessExpiresAt: jwtExp(access) ?? (typeof stored?.expires_at === "number" ? stored.expires_at : null),
         refreshExpiresAt: jwtExp(stored?.refresh_token),
+        issuedAt: times.iat,
+        authTime: times.authTime,
       },
       { headers: NO_STORE }
     );
