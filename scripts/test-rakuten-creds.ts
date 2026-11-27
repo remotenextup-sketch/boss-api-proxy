@@ -7,16 +7,16 @@ import { randomBytes } from 'node:crypto'
 import { fake } from './boss-token-test/fake-kv.mjs'
 
 // ---- 秘密の値（どこにも出てはいけない） ----
-const ENV_SECRET = 'SS-env-SECRET-0001'
-const ENV_LICENSE = 'SL-env-LICENSE-0001'
-const NEW_LICENSE = 'SL-new-LICENSE-0002'
-const NEW_SECRET = 'SS-new-SECRET-0002'
-const BAD_LICENSE = 'SL-bad-LICENSE-0003'
-const CRED_KEY = 'cred-API-KEY-abcdef'
-const PROXY_KEY = 'proxy-API-KEY-123456'
+const ENV_SECRET = 'TEST-ONLY-fake-secret-env'
+const ENV_LICENSE = 'TEST-ONLY-fake-license-env'
+const NEW_LICENSE = 'TEST-ONLY-fake-license-new'
+const NEW_SECRET = 'TEST-ONLY-fake-secret-new'
+const BAD_LICENSE = 'TEST-ONLY-fake-license-bad'
+const CRED_KEY = 'TEST-ONLY-fake-credentials-key'
+const PROXY_KEY = 'TEST-ONLY-fake-proxy-key'
 const ENC_KEY = randomBytes(32).toString('base64')
 const SECRETS = [ENV_SECRET, ENV_LICENSE, NEW_LICENSE, NEW_SECRET, BAD_LICENSE, CRED_KEY, PROXY_KEY, ENC_KEY]
-const RMS_DETAIL = 'RMS-DETAIL-must-not-leak'
+const RMS_DETAIL = 'TEST-ONLY-rms-detail'
 
 process.env.RAKUTEN_SERVICE_SECRET = ENV_SECRET
 process.env.RAKUTEN_LICENSE_KEY = ENV_LICENSE
@@ -242,9 +242,9 @@ await t('KV が読めない・暗号文が壊れている・鍵が違うとき�
 
 // ---- BOSS の認証の確認（トークンの取得だけ。業務 API は呼ばない） ----
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url')
-const ACCESS = `${b64({ alg: 'none' })}.${b64({ iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 300 })}.sig-ACCESS-SECRET`
-const REFRESH = `${b64({ alg: 'none' })}.${b64({ exp: 1_900_000_000 })}.sig-REFRESH-SECRET`
-SECRETS.push(ACCESS, REFRESH, 'sig-ACCESS-SECRET', 'sig-REFRESH-SECRET')
+const ACCESS = `${b64({ alg: 'none' })}.${b64({ iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 300 })}.TEST-ONLY-sig-access`
+const REFRESH = `${b64({ alg: 'none' })}.${b64({ exp: 1_900_000_000 })}.TEST-ONLY-sig-refresh`
+SECRETS.push(ACCESS, REFRESH, 'TEST-ONLY-sig-access', 'TEST-ONLY-sig-refresh')
 
 await t('BOSS：保存済みのトークンが有効なら外へ出ずに期限だけ返す（値は返さない）', async () => {
   fake.reset()

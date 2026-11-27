@@ -1,4 +1,4 @@
-// テスト専用の偽の KV（@vercel/kv の get / set（nx・ex）/ del / eval だけ）。状態は fake から操作する
+// テスト専用の偽の KV（@vercel/kv の get / set（nx・ex）/ getdel / del / eval だけ）。状態は fake から操作する
 const store = new Map() // key -> { v, exp }
 export const fake = {
   store,
@@ -37,6 +37,7 @@ export const kv = {
   async incr(k) { await tick(); rec('incr', k); const e = alive(k); const n = (e ? Number(e.v) : 0) + 1; store.set(k, { v: n, exp: e?.exp ?? 0 }); return n },
   async expire(k, sec) { await tick(); rec('expire', k); const e = alive(k); if (!e) return 0; e.exp = Date.now() + sec * 1000; return 1 },
   async pttl(k) { await tick(); rec('pttl', k); const e = alive(k); if (!e) return -2; return e.exp ? e.exp - Date.now() : -1 },
+  async getdel(k) { await tick(); rec('getdel', k); const e = alive(k); store.delete(k); return e ? clone(e.v) : null },
   async del(k) { await tick(); rec('del', k); return store.delete(k) ? 1 : 0 },
   async eval(script, keys, args) {
     await tick()

@@ -1,7 +1,9 @@
 // app/api/boss/oauth/callback/route.ts
-import { NextRequest, NextResponse } from "next/server";
+// BOSS の再認証の戻り先。ブラウザには成功・失敗が分かる簡単な画面を、Accept が JSON だけの呼び出しには今までどおりの JSON を返す（lib/oauthCallbackPage.ts）
+import { NextRequest } from "next/server";
 import { kv } from "@vercel/kv";
 import { OAUTH_STATE_PREFIX } from "@/lib/oauthState";
+import { respond } from "@/lib/oauthCallbackPage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +21,7 @@ export async function GET(req: NextRequest) {
     const state = searchParams.get("state");
 
     if (!code) {
-      return NextResponse.json(
+      return respond(req, 
         { ok: false, message: "no code" },
         { status: 400 }
       );
@@ -28,14 +30,14 @@ export async function GET(req: NextRequest) {
     // ブラウザが戻ってくる先なので API キーは付けられない。代わりに、oauth/auto (鍵が必要) が作った
     // 使い捨ての state と一致するときだけ受け付ける。照合と同時に消すので、同じ state は 2 回使えない
     if (!state || !/^[0-9a-f]{64}$/.test(state)) {
-      return NextResponse.json(
+      return respond(req, 
         { ok: false, message: "invalid state" },
         { status: 400 }
       );
     }
     const issued = await kv.getdel(`${OAUTH_STATE_PREFIX}${state}`);
     if (!issued) {
-      return NextResponse.json(
+      return respond(req, 
         { ok: false, message: "invalid state" },
         { status: 400 }
       );
@@ -46,7 +48,7 @@ export async function GET(req: NextRequest) {
     const REDIRECT_URI = process.env.BOSS_REDIRECT_URI;
 
     if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
-      return NextResponse.json(
+      return respond(req, 
         { ok: false, message: "missing env" },
         { status: 500 }
       );
@@ -75,7 +77,7 @@ export async function GET(req: NextRequest) {
 
     if (!tokenRes.ok) {
       console.error("[oauth/callback] token exchange failed", tokenRes.status);
-      return NextResponse.json(
+      return respond(req, 
         { ok: false, message: "token exchange failed", status: tokenRes.status },
         { status: 502 }
       );
@@ -90,7 +92,7 @@ export async function GET(req: NextRequest) {
 
     if (!json?.access_token || !json?.refresh_token || !json?.expires_in) {
       console.error("[oauth/callback] invalid token response");
-      return NextResponse.json(
+      return respond(req, 
         { ok: false, message: "invalid token response" },
         { status: 502 }
       );
@@ -105,14 +107,14 @@ export async function GET(req: NextRequest) {
     // ★ KV 保存（以降すべてのAPIがこれを使う）
     await kv.set("boss:token", token);
 
-    return NextResponse.json({
+    return respond(req, {
       ok: true,
       saved: true,
     });
   } catch (e: any) {
     // 例外の文言は返さない（応答はブラウザに出るため）。名前だけログに
     console.error("[oauth/callback] failed", e?.name ?? "Error");
-    return NextResponse.json(
+    return respond(req, 
       { ok: false, message: "internal_error" },
       { status: 500 }
     );
