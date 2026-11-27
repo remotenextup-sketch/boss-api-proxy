@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireProxyApiKey } from "@/lib/proxyAuth";
+import { rakutenEsaHeader } from "@/lib/rakutenCreds";
 
 // 問い合わせ返信に添付するファイルを楽天へ登録する。
 // 楽天側の制限（inquirymngapi.attachment.post）:
@@ -27,16 +28,8 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   pdf: "application/pdf",
 };
 
-function buildEsaAuthHeader(): string {
-  const serviceSecret = process.env.RAKUTEN_SERVICE_SECRET?.trim();
-  const licenseKey = process.env.RAKUTEN_LICENSE_KEY?.trim();
-  if (!serviceSecret) throw new Error("RAKUTEN_SERVICE_SECRET is not set");
-  if (!licenseKey) throw new Error("RAKUTEN_LICENSE_KEY is not set");
-  return (
-    "ESA " +
-    Buffer.from(`${serviceSecret}:${licenseKey}`, "utf-8").toString("base64")
-  );
-}
+// 認証情報は lib/rakutenCreds.ts から（画面で差し替えた値が KV にあればそれ、無ければ今までどおり環境変数）
+const buildEsaAuthHeader = rakutenEsaHeader;
 
 
 export async function POST(req: NextRequest) {
@@ -113,7 +106,7 @@ export async function POST(req: NextRequest) {
     res = await fetch(RAKUTEN_EP_ATTACHMENT, {
       method: "POST",
       headers: {
-        Authorization: buildEsaAuthHeader(),
+        Authorization: await buildEsaAuthHeader(),
         Accept: "*/*",
         // 楽天のサンプルに合わせて User-Agent を明示する。
         // アップロードは別のWAFルールに当たることがあるため。

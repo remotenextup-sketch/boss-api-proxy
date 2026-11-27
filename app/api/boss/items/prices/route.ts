@@ -9,14 +9,11 @@ export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireProxyApiKey } from '@/lib/proxyAuth'
+import { rakutenEsaHeaderOrNull } from '@/lib/rakutenCreds'
 import { fetchAllItemPrices, RmsError } from '@/lib/rmsItemPrices'
 
-function esaAuthorization(): string | null {
-  const serviceSecret = process.env.RAKUTEN_SERVICE_SECRET?.trim()
-  const licenseKey = process.env.RAKUTEN_LICENSE_KEY?.trim()
-  if (!serviceSecret || !licenseKey) return null
-  return 'ESA ' + Buffer.from(`${serviceSecret}:${licenseKey}`, 'utf-8').toString('base64')
-}
+// 認証情報は lib/rakutenCreds.ts から（画面で差し替えた値が KV にあればそれ、無ければ今までどおり環境変数）
+const esaAuthorization = rakutenEsaHeaderOrNull
 
 const intParam = (v: string | null, def: number, min: number, max: number) => {
   const n = v && /^\d{1,4}$/.test(v) ? Number(v) : def
@@ -27,7 +24,7 @@ export async function GET(req: NextRequest) {
   const denied = requireProxyApiKey(req)
   if (denied) return denied
 
-  const authorization = esaAuthorization()
+  const authorization = await esaAuthorization()
   if (!authorization) return NextResponse.json({ ok: false, reason: 'rms_not_configured' }, { status: 503 })
 
   const hits = intParam(req.nextUrl.searchParams.get('hits'), 100, 1, 100)

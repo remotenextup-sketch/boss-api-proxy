@@ -3,20 +3,13 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireProxyApiKey } from "@/lib/proxyAuth";
+import { rakutenEsaHeader } from "@/lib/rakutenCreds";
 
 const RAKUTEN_BASE = "https://api.rms.rakuten.co.jp";
 const RAKUTEN_EP_INQUIRIES = `${RAKUTEN_BASE}/es/1.0/inquirymng-api/inquiries`;
 
-function buildEsaAuthHeader(): string {
-  const serviceSecret = process.env.RAKUTEN_SERVICE_SECRET?.trim();
-  const licenseKey = process.env.RAKUTEN_LICENSE_KEY?.trim();
-  if (!serviceSecret) throw new Error("RAKUTEN_SERVICE_SECRET is not set");
-  if (!licenseKey) throw new Error("RAKUTEN_LICENSE_KEY is not set");
-  return (
-    "ESA " +
-    Buffer.from(`${serviceSecret}:${licenseKey}`, "utf-8").toString("base64")
-  );
-}
+// 認証情報は lib/rakutenCreds.ts から（画面で差し替えた値が KV にあればそれ、無ければ今までどおり環境変数）
+const buildEsaAuthHeader = rakutenEsaHeader;
 
 
 export async function GET(req: NextRequest) {
@@ -25,7 +18,7 @@ export async function GET(req: NextRequest) {
 
   let authHeader: string;
   try {
-    authHeader = buildEsaAuthHeader();
+    authHeader = await buildEsaAuthHeader();
   } catch (e) {
     return NextResponse.json({ ok: false, reason: (e as Error).message }, { status: 500 });
   }

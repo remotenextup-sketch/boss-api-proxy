@@ -110,8 +110,10 @@ export async function GET(req: NextRequest) {
       saved: true,
     });
   } catch (e: any) {
+    // 例外の文言は返さない（応答はブラウザに出るため）。名前だけログに
+    console.error("[oauth/callback] failed", e?.name ?? "Error");
     return NextResponse.json(
-      { ok: false, message: "internal_error", error: e.message },
+      { ok: false, message: "internal_error" },
       { status: 500 }
     );
   }
