@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireProxyApiKey } from "@/lib/proxyAuth";
+import { getRakutenCreds, RakutenCredsError, rakutenEsaHeader } from "@/lib/rakutenCreds";
 
 // ライセンスキーの有効期限を取得する（LicenseManagementAPI: license.expiryDate.get）。
 // 問い合わせ管理APIを使うとライセンスキーの有効期限は90日で、
@@ -17,23 +18,15 @@ const RAKUTEN_BASE = "https://api.rms.rakuten.co.jp";
 // 他のパスは404、このパスのみ400が返り、licenseKey をクエリに付けると200になる。
 const EXPIRY_PATH = `${RAKUTEN_BASE}/es/1.0/license-management/license-key/expiry-date`;
 
-function candidateUrls(): string[] {
+// 認証情報は lib/rakutenCreds.ts から（画面で差し替えた値が KV にあればそれ、無ければ今までどおり環境変数）。
+// 期限は「今使っている」ライセンスキーのものを返す（バナー・GAS の期限の通知はこれを見る）
+async function candidateUrls(): Promise<string[]> {
   // licenseKey をクエリに付ける形で 200 が返ることを確認済み
-  const licenseKey = process.env.RAKUTEN_LICENSE_KEY?.trim() ?? "";
+  const licenseKey = (await getRakutenCreds()).creds.licenseKey ?? "";
   return [`${EXPIRY_PATH}?licenseKey=${encodeURIComponent(licenseKey)}`];
 }
 
-function buildEsaAuthHeader(): string {
-  const serviceSecret = process.env.RAKUTEN_SERVICE_SECRET?.trim();
-  const licenseKey = process.env.RAKUTEN_LICENSE_KEY?.trim();
-  if (!serviceSecret) throw new Error("RAKUTEN_SERVICE_SECRET is not set");
-  if (!licenseKey) throw new Error("RAKUTEN_LICENSE_KEY is not set");
-  return (
-    "ESA " +
-    Buffer.from(`${serviceSecret}:${licenseKey}`, "utf-8").toString("base64")
-  );
-}
-
+const buildEsaAuthHeader = rakutenEsaHeader;
 
 /** レスポンス構造が変わっても拾えるよう、日付らしき値を再帰的に探す */
 function findExpiryDate(value: unknown): string | null {
@@ -67,7 +60,14 @@ export async function GET(req: NextRequest) {
   if (denied) return denied;
 
   const configured = process.env.RAKUTEN_EP_LICENSE_EXPIRY?.trim();
-  const candidates = configured ? [configured] : candidateUrls();
+  let candidates: string[];
+  try {
+    candidates = configured ? [configured] : await candidateUrls();
+  } catch (e) {
+    // 画面で切り替えた設定が KV にあるのに使えない（KV が止まっている・復号できない）。環境変数の古いキーでは確かめない
+    if (e instanceof RakutenCredsError) return NextResponse.json({ ok: false, reason: "creds_unavailable" }, { status: 503 });
+    throw e;
+  }
   const tried: Array<{ url: string; status: number | string; detail?: string }> = [];
 
   let res: Response | null = null;
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
     try {
       const r = await fetch(url, {
         method: "GET",
-        headers: { Authorization: buildEsaAuthHeader(), Accept: "application/json" },
+        headers: { Authorization: await buildEsaAuthHeader(), Accept: "application/json" },
       });
       const bodyText = r.status === 200 ? '' : (await r.text()).slice(0, 160);
       // キーが含まれるURLはそのまま返さない

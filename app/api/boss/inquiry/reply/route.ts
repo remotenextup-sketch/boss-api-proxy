@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireProxyApiKey } from "@/lib/proxyAuth";
+import { rakutenEsaHeader } from "@/lib/rakutenCreds";
 
 const RAKUTEN_BASE = "https://api.rms.rakuten.co.jp";
 const RAKUTEN_EP_REPLY = `${RAKUTEN_BASE}/es/1.0/inquirymng-api/inquiry/reply`;
@@ -23,16 +24,8 @@ const ALLOWED_RAKUTEN_DOMAINS = [
   "item.rakuten.co.jp",
 ];
 
-function buildEsaAuthHeader(): string {
-  const serviceSecret = process.env.RAKUTEN_SERVICE_SECRET?.trim();
-  const licenseKey = process.env.RAKUTEN_LICENSE_KEY?.trim();
-  if (!serviceSecret) throw new Error("RAKUTEN_SERVICE_SECRET is not set");
-  if (!licenseKey) throw new Error("RAKUTEN_LICENSE_KEY is not set");
-  return (
-    "ESA " +
-    Buffer.from(`${serviceSecret}:${licenseKey}`, "utf-8").toString("base64")
-  );
-}
+// 認証情報は lib/rakutenCreds.ts から（画面で差し替えた値が KV にあればそれ、無ければ今までどおり環境変数）
+const buildEsaAuthHeader = rakutenEsaHeader;
 
 function isAllowedUrl(url: string): boolean {
   try {
@@ -133,7 +126,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const authHeader = buildEsaAuthHeader();
+    const authHeader = await buildEsaAuthHeader();
 
     // Step 1: 楽天へ返信
     console.log(`[rakuten-reply] inquiryNumber=${inquiryNumber} shopId=${shopId} msgLen=${sanitized.length} attachments=${validAttachments.length}`)
